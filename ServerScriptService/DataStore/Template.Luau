@@ -20,22 +20,23 @@ local Template = {}
 
 
 Template.Currency = {
-	
-	Leaves = zero(),
+	Leafs = zero(),
 	Compost = zero(),
 	Nuts = zero(),
 }
 
 Template.Statistics = {
 	
-	TotalLeavesCollected = zero(),
-	TotalCompostCollected = zero(),
-	TotalNutsCollected = zero(),
-	
-	TotalRunesOpened = zero(),
+	TotalValues = {
+		TotalLeafsCollected = zero(),
+		TotalCompostCollected = zero(),
+		TotalNutsCollected = zero(),
+		TotalRunesOpened = zero(),
+	},
 	
 	PlayTime = 0,
 	JoinCount = 0,
+	
 }
 
 Template.Tree = {
@@ -44,42 +45,70 @@ Template.Tree = {
 
 Template.Unlocks = {
 	--upgrade boards
-	Compost = false,
-	Nuts = false,
+	UpgradeBoards = {
+		Compost = false,
+		Nuts = false,
+	},
 
 	--runes
-	LeafRune = false,
+	Runes = {
+		LeafRune = false,
+	},
 
 	--areas
-	Area1 = true,
+	Areas = {
+		Area1 = true,
+	},
+
 }
 
 Template.Upgrades = {
 	-- Leaf upgrades
-	LeafAdd = 0,
-	LeafMult = 0,
-	LeafSpawnRate = 0,
-	LeafCapacity =0,
+	LeafUpgrades = {
+		LeafAdd = 0,
+		LeafMult = 0,
+		LeafSpawnRate = 0,
+		LeafCapacity =0,
+	},
 
 
 	-- Compost upgrades
-	CompostMult = 0,
-	CompostLeafMult = 0,
-	CompostCollectionArea = 0,
-	CompostLeafCapacity = 0,
+	CompostUpgrades = {	
+		CompostMult = 0,
+		CompostLeafMult = 0,
+		CompostCollectionArea = 0,
+		CompostLeafCapacity = 0,
+	},
 
 	-- Nuts upgrades
-	NutMult = 0,
-	NutCompostMult = 0,
-	NutLeafMult = 0,
-	NutChance = 0,
+	NutUpgrades = {
+		NutMult = 0,
+		NutCompostMult = 0,
+		NutLeafMult = 0,
+		NutChance = 0,
+	},
 }
 
 Template.Settings = {
 	
-	NumberNotation = "scientific", -- "scientific" or "abbreviation"
-	HidePlayers = false,
+	General = {
+		NumberNotation = "scientific", -- "scientific" or "abbreviation"
+		HidePlayers = false,
+		HideMaxUpgrades = false,
+	},
+
+	Audio = {
+		Music = true,
+		SoundEffects = true,
+	},
 	
+	Misc = {},
+	
+	CurrencyView = {
+		Leafs = true,
+		Compost = true,
+		Nuts = true,
+	}
 }
 
 -- Stackable resources — keyed by itemId, value is quantity.
@@ -88,7 +117,6 @@ Template.Items = {}
 
 --Runes where value equal quntaty of that rune (zeroed as rune may surpass e303)
 Template.Runes = {
-	
 	LeafRune = {
 		OakLeaf = zero(),
 		MapleLeaf = zero(),
@@ -97,8 +125,9 @@ Template.Runes = {
 		CrystalLeaf = zero(),
 		CelestialLeaf = zero(),
 		DivineLeaf = zero(),
-	}
+	},
 }
 
+Template.Quests = {}
 
 return Template
