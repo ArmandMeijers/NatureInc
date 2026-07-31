@@ -19,7 +19,7 @@ end
 local Template = {}
 
 Template.Currency = {
-	Leaves = zero(),
+	Leafs = zero(),
 	Compost = zero(),
 	Nuts = zero(),
 }
@@ -109,7 +109,7 @@ Template.Settings = {
 	Misc = {},
 
 	CurrencyView = {
-		Leaves = true,
+		Leafs = true,
 		Compost = true,
 		Nuts = true,
 	}
