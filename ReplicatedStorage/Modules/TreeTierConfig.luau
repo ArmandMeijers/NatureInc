@@ -1,35 +1,68 @@
 --[[
-	SettingsState.luau
-	Client-side cache + change signal for the local player's settings.
-	Any other LocalScript (currency boards, etc.) can require this to read
-	the current value of a setting, or subscribe to be notified the moment
-	it changes -- e.g. to reformat a BigNumber display when NumberNotation
-	is toggled, or to show/hide a currency display when CurrencyView.Leafs
-	is flipped. Keys are namespaced as "Category.Key", e.g. "Audio.Music"
-	or "CurrencyView.Leafs". SettingsController is the only script that
-	should call _Set.
+	TreeTierConfig.luau
+
+	Single source of truth for every tree tier: its cost to reach, the
+	boosts it grants (current tier only — tiers don't stack), what it
+	unlocks, what gets reset on tier-up, and which model represents it.
+	Read by both client (UI preview, local tree model) and server
+	(validation). All numbers below are placeholders — adjust freely.
+
+	Boosts: each entry is { Amount = number, Type = "Additive" |
+	"Multiplicative" | "Power" }. Fed straight into BoostMath.Calculate.
+
+	Unlocks: mirrors the exact nested shape of Template.Unlocks. TreeTierService
+	walks this recursively and sets the matching path(s) to the given value —
+	no per-field mapping code needed. Add/rename fields in Template.Unlocks
+	freely; this just needs to point at valid paths under it.
+
+	Resets: dot-paths (same syntax as DataManager.Get/Set) that get reset to
+	their Template default value on tier-up.
+
+	Location: ReplicatedStorage/Modules/TreeTierConfig.luau
 ]]
-local SettingsState = {}
 
-local cache = {}
-local changedEvent = Instance.new("BindableEvent")
-SettingsState.Changed = changedEvent.Event -- :Connect(function(path, value) ... end)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local BigNumber = require(ReplicatedStorage.Modules.BigNumber)
 
-function SettingsState.Get(path)
-	return cache[path]
-end
+local TreeTierConfig = {}
 
-function SettingsState.GetAll()
-	local copy = {}
-	for path, value in pairs(cache) do
-		copy[path] = value
-	end
-	return copy
-end
+TreeTierConfig[1] = {
+	Cost = nil, -- starting tier, nothing to pay
+	Boosts = {
+		Leafs = { Amount = 1, Type = "Multiplicative" },
+		Compost = { Amount = 1, Type = "Multiplicative" },
+	},
+	Unlocks = nil,
+	Resets = nil,
+	Model = "TreeTier1",
+}
 
-function SettingsState._Set(path, value)
-	cache[path] = value
-	changedEvent:Fire(path, value)
-end
+TreeTierConfig[2] = {
+	Cost = { Currency = "Compost", Amount = BigNumber.FromNumber(500000) },
+	Boosts = {
+		Leafs = { Amount = 3, Type = "Multiplicative" },
+		Compost = { Amount = 1.5, Type = "Multiplicative" },
+	},
+	Unlocks = {
+		UpgradeBoards = { Compost = true },
+		Runes = { LeafRune = true },
+	},
+	Resets = { "Currency.Leafs", "Currency.Compost" },
+	Model = "TreeTier2",
+}
 
-return SettingsState
+TreeTierConfig[3] = {
+	Cost = { Currency = "Compost", Amount = BigNumber.FromNumber(5000000) },
+	Boosts = {
+		Leafs = { Amount = 6, Type = "Multiplicative" },
+		Compost = { Amount = 2, Type = "Multiplicative" },
+		Nuts = { Amount = 1, Type = "Multiplicative" },
+	},
+	Unlocks = {
+		UpgradeBoards = { Nuts = true },
+	},
+	Resets = { "Currency.Leafs", "Currency.Compost" },
+	Model = "TreeTier3",
+}
+
+return TreeTierConfig

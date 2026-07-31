@@ -18,7 +18,6 @@ end
 
 local Template = {}
 
-
 Template.Currency = {
 	Leaves = zero(),
 	Compost = zero(),
@@ -36,6 +35,7 @@ Template.Statistics = {
 
 	PlayTime = 0, -- seconds
 	JoinCount = 0,
+	RobuxSpent = 0,
 
 }
 
@@ -49,6 +49,7 @@ Template.Unlocks = {
 
 	-- Upgrade boards
 	UpgradeBoards = {
+		Leafs = true,
 		Compost = false,
 		Nuts = false,
 	},
@@ -93,7 +94,7 @@ Template.Upgrades = {
 }
 
 Template.Settings = {
-	
+
 	General = {
 		NumberNotation = "scientific", -- "scientific" or "abbreviation"
 		HidePlayers = false,
@@ -104,9 +105,9 @@ Template.Settings = {
 		Music = true,
 		SoundEffects = true,
 	},
-	
+
 	Misc = {},
-	
+
 	CurrencyView = {
 		Leaves = true,
 		Compost = true,
@@ -131,6 +132,7 @@ Template.Runes = {
 	},
 }
 
-Template.Quests = {}
+Template.Quests = {
+}
 
 return Template
