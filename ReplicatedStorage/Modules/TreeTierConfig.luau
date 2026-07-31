@@ -26,6 +26,12 @@ local BigNumber = require(ReplicatedStorage.Modules.BigNumber)
 
 local TreeTierConfig = {}
 
+
+local DefaultResets = {
+	"Currency.Leafs",
+	"Currency.Compost",
+}
+
 TreeTierConfig[1] = {
 	Cost = nil, -- starting tier, nothing to pay
 	Boosts = {
@@ -47,7 +53,7 @@ TreeTierConfig[2] = {
 		UpgradeBoards = { Compost = true },
 		Runes = { LeafRune = true },
 	},
-	Resets = { "Currency.Leafs", "Currency.Compost" },
+	Resets = DefaultResets,
 	Model = "TreeTier2",
 }
 
@@ -61,7 +67,7 @@ TreeTierConfig[3] = {
 	Unlocks = {
 		UpgradeBoards = { Nuts = true },
 	},
-	Resets = { "Currency.Leafs", "Currency.Compost" },
+	Resets = DefaultResets
 	Model = "TreeTier3",
 }
 
