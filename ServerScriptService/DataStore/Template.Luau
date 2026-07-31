@@ -20,23 +20,23 @@ local Template = {}
 
 
 Template.Currency = {
-	Leafs = zero(),
+	Leaves = zero(),
 	Compost = zero(),
 	Nuts = zero(),
 }
 
 Template.Statistics = {
-	
+
 	TotalValues = {
-		TotalLeafsCollected = zero(),
+		TotalLeavesCollected = zero(),
 		TotalCompostCollected = zero(),
 		TotalNutsCollected = zero(),
 		TotalRunesOpened = zero(),
 	},
-	
-	PlayTime = 0,
+
+	PlayTime = 0, -- seconds
 	JoinCount = 0,
-	
+
 }
 
 Template.Tree = {
@@ -44,18 +44,21 @@ Template.Tree = {
 }
 
 Template.Unlocks = {
-	--upgrade boards
+	-- Currency tiers
+	Nuts = false,
+
+	-- Upgrade boards
 	UpgradeBoards = {
 		Compost = false,
 		Nuts = false,
 	},
 
-	--runes
+	-- Runes
 	Runes = {
 		LeafRune = false,
 	},
 
-	--areas
+	-- Areas
 	Areas = {
 		Area1 = true,
 	},
@@ -68,7 +71,7 @@ Template.Upgrades = {
 		LeafAdd = 0,
 		LeafMult = 0,
 		LeafSpawnRate = 0,
-		LeafCapacity =0,
+		LeafCapacity = 0,
 	},
 
 
@@ -105,7 +108,7 @@ Template.Settings = {
 	Misc = {},
 	
 	CurrencyView = {
-		Leafs = true,
+		Leaves = true,
 		Compost = true,
 		Nuts = true,
 	}

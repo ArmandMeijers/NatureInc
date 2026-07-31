@@ -103,7 +103,9 @@ end
 -- Converts back to a plain Lua number. Lossy/saturating for very large values —
 -- use this for gameplay math well within double range, not for display.
 function BigNumber.ToNumber(a: BigNum): number
-	if a.exponent > 308 then
+	-- Guard before the multiply, not after: mantissa can be up to ~9.999,
+	-- so exponent 308 can still overflow a double (max ~1.7976931348623157e308).
+	if a.exponent >= 308 then
 		return a.mantissa > 0 and math.huge or -math.huge
 	end
 	return a.mantissa * (10 ^ a.exponent)
@@ -203,8 +205,14 @@ end
 
 -- Base-10 logarithm, returned as a plain number (useful for cost-curve math,
 -- e.g. "how many levels can this currency afford").
+-- Zero is a valid BigNumber state (see IsZero), so it returns -math.huge
+-- instead of erroring — callers doing cost-curve math on a 0 balance would
+-- otherwise crash instead of correctly affording nothing.
 function BigNumber.Log10(a: BigNum): number
-	if a.mantissa <= 0 then
+	if a.mantissa == 0 then
+		return -math.huge
+	end
+	if a.mantissa < 0 then
 		error("BigNumber.Log10: value must be positive")
 	end
 	return a.exponent + math.log(a.mantissa, 10)

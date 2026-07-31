@@ -1,3 +1,4 @@
+--!strict
 --[[
 	DataManager.luau
 
@@ -9,17 +10,19 @@
 ]]
 
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ProfileStore = require(script.Parent.ProfileStore)
 local Template = require(script.Parent.Template)
 local BigNumber = require(ReplicatedStorage.Modules.BigNumber)
 
+type BigNum = BigNumber.BigNum
+type Profile = ProfileStore.Profile<typeof(Template)>
+
 local DataManager = {}
 
 local PlayerStore = ProfileStore.New("PlayerStore", Template)
-local Profiles: { [Player]: any } = {}
+local Profiles: { [Player]: Profile } = {}
 
 -- ============================================================
 -- Session lifecycle
@@ -72,15 +75,15 @@ Players.PlayerRemoving:Connect(onPlayerRemoving)
 -- e.g. DataManager.Get(player, "Tree.Tier"), "Settings.NumberNotation"
 -- ============================================================
 
-local function getPath(data: any, path: string): any
+local function getPath(data: any, path: string): (any, boolean)
 	local current = data
 	for _, key in string.split(path, ".") do
 		if type(current) ~= "table" then
-			return nil
+			return nil, false
 		end
 		current = current[key]
 	end
-	return current
+	return current, true
 end
 
 local function setPath(data: any, path: string, value: any)
@@ -89,22 +92,41 @@ local function setPath(data: any, path: string, value: any)
 	for i = 1, #keys - 1 do
 		current = current[keys[i]]
 		if type(current) ~= "table" then
-			error(`DataManager.Set: invalid path '{path}'`)
+			error(`DataManager.Set: invalid path '{path}' (segment '{keys[i]}' is not a table)`)
 		end
 	end
 	current[keys[#keys]] = value
 end
 
-function DataManager.GetProfile(player: Player): any
+function DataManager.GetProfile(player: Player): Profile?
+	return Profiles[player]
+end
+
+-- Yields until the player's profile has finished loading (or the player
+-- leaves before it does, in which case this returns nil). Use this from
+-- server-side systems that might run before StartSessionAsync resolves —
+-- e.g. code in PlayerAdded ordering you don't control.
+function DataManager.WaitForProfile(player: Player): Profile?
+	if Profiles[player] then
+		return Profiles[player]
+	end
+	while player.Parent == Players and not Profiles[player] do
+		task.wait()
+	end
 	return Profiles[player]
 end
 
 function DataManager.Get(player: Player, path: string): any
 	local profile = Profiles[player]
 	if not profile then
+		warn(`DataManager.Get: no active profile for {player.Name} (path '{path}')`)
 		return nil
 	end
-	return getPath(profile.Data, path)
+	local value, found = getPath(profile.Data, path)
+	if not found then
+		warn(`DataManager.Get: path '{path}' does not exist on {player.Name}'s data`)
+	end
+	return value
 end
 
 function DataManager.Set(player: Player, path: string, value: any)
@@ -119,23 +141,23 @@ end
 -- Currency helpers (BigNumber-aware)
 -- ============================================================
 
-function DataManager.GetCurrency(player: Player, currencyName: string)
+function DataManager.GetCurrency(player: Player, currencyName: string): BigNum
 	local raw = DataManager.Get(player, "Currency." .. currencyName)
 	return BigNumber.Deserialize(raw)
 end
 
-function DataManager.SetCurrency(player: Player, currencyName: string, amount)
+function DataManager.SetCurrency(player: Player, currencyName: string, amount: BigNum)
 	DataManager.Set(player, "Currency." .. currencyName, BigNumber.Serialize(amount))
 end
 
-function DataManager.AddCurrency(player: Player, currencyName: string, amount)
+function DataManager.AddCurrency(player: Player, currencyName: string, amount: BigNum): BigNum
 	local current = DataManager.GetCurrency(player, currencyName)
 	local newValue = BigNumber.Add(current, amount)
 	DataManager.SetCurrency(player, currencyName, newValue)
 	return newValue
 end
 
-function DataManager.SubtractCurrency(player: Player, currencyName: string, amount)
+function DataManager.SubtractCurrency(player: Player, currencyName: string, amount: BigNum): BigNum
 	local current = DataManager.GetCurrency(player, currencyName)
 	local newValue = BigNumber.Sub(current, amount)
 	if BigNumber.LessThan(newValue, BigNumber.new(0, 0)) then
@@ -145,10 +167,9 @@ function DataManager.SubtractCurrency(player: Player, currencyName: string, amou
 	return newValue
 end
 
-function DataManager.CanAfford(player: Player, currencyName: string, cost): boolean
+function DataManager.CanAfford(player: Player, currencyName: string, cost: BigNum): boolean
 	local current = DataManager.GetCurrency(player, currencyName)
 	return BigNumber.GreaterThanOrEqual(current, cost)
 end
-
 
 return DataManager
