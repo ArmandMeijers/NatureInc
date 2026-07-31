@@ -67,7 +67,7 @@ TreeTierConfig[3] = {
 	Unlocks = {
 		UpgradeBoards = { Nuts = true },
 	},
-	Resets = DefaultResets
+	Resets = DefaultResets,
 	Model = "TreeTier3",
 }
 

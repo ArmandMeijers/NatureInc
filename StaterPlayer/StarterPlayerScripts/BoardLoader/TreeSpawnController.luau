@@ -2,11 +2,19 @@
 	TreeSpawnController.client.luau
 
 	Clones the tree model matching this player's current tier and pivots
-	it onto TOP of the TreeSpawn part (TreeSpawn's Position is its center,
-	so we push up by half its height). The clone is parented into
+	it onto TOP of the TreeSpawn part. The clone is parented into
 	workspace from a LocalScript, so — same trick as the board GUI — it
 	only exists on this client. That's what makes a per-player tree tier
 	work without giving every player their own physical tree in the world.
+
+	IMPORTANT: PivotTo moves a model's PIVOT to a CFrame, not its base —
+	and a model's pivot usually sits wherever it happened to land when it
+	was grouped (often near its geometric center), not at its bottom. So
+	finding the top of TreeSpawn isn't enough on its own; we also have to
+	measure how far each tree model's actual bottom sits below its own
+	pivot (via GetBoundingBox) and add that back in. This works correctly
+	for any tree model — any height, any pivot placement — without
+	needing every tree to have a manually-set "pivot at base" in Studio.
 
 	Plays a sparkle/particle burst on every tier change after the first
 	(so joining doesn't trigger it, only an actual tier-up does).
@@ -26,8 +34,19 @@ local treeSpawn = Workspace:WaitForChild("Area1"):WaitForChild("TreeSpawn")
 local currentClone: Model? = nil
 local hasSpawnedOnce = false
 
-local function getSpawnCFrame(): CFrame
-	return treeSpawn.CFrame + Vector3.new(0, treeSpawn.Size.Y / 2, 0)
+-- How far this model's own pivot sits ABOVE its actual lowest point.
+-- (If the pivot happened to be exactly at the base already, this is 0.)
+local function getPivotHeightAboveBase(model: Model): number
+	local boundingBoxCFrame, size = model:GetBoundingBox()
+	local bottomY = boundingBoxCFrame.Position.Y - size.Y / 2
+	local pivotY = model:GetPivot().Position.Y
+	return pivotY - bottomY
+end
+
+local function getSpawnCFrame(model: Model): CFrame
+	local topY = treeSpawn.Position.Y + treeSpawn.Size.Y / 2
+	local pivotHeight = getPivotHeightAboveBase(model)
+	return CFrame.new(treeSpawn.Position.X, topY + pivotHeight, treeSpawn.Position.Z)
 end
 
 local function playTierUpEffect()
@@ -81,7 +100,7 @@ local function showTier(tier: number)
 	end
 
 	local clone = template:Clone()
-	clone:PivotTo(getSpawnCFrame())
+	clone:PivotTo(getSpawnCFrame(clone))
 	clone.Parent = Workspace
 	currentClone = clone
 

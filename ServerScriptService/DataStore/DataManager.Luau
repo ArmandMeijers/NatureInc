@@ -252,6 +252,33 @@ function DataManager.Exists(player: Player, path: string): boolean
 	return DataManager.Get(player, path) ~= nil
 end
 
+-- Table defaults in Template (e.g. a serialized BigNumber { m = 0, e = 0 })
+-- must never be handed out by reference — assigning Template's own table
+-- directly would let every reset player share (and potentially corrupt)
+-- the same table Template itself uses for every other player forever.
+local function deepCopy(value: any): any
+	if type(value) ~= "table" then
+		return value
+	end
+	local copy = {}
+	for key, nested in value do
+		copy[key] = deepCopy(nested)
+	end
+	return copy
+end
+
+-- Resets a path back to whatever Template currently says its default is.
+-- Used by TreeTierService on tier-up (e.g. reset Currency.Leafs/Compost).
+function DataManager.ResetToDefault(player: Player, path: string): boolean
+	if not pathExistsInTemplate(path) then
+		warn(`DataManager.ResetToDefault: unknown path '{path}' — check for a typo against Template.luau`)
+		return false
+	end
+
+	local defaultValue = deepCopy(getPath(Template, path))
+	return DataManager.Set(player, path, defaultValue)
+end
+
 -- Escape hatch for systems that need many values at once. This is the LIVE
 -- table — write through Set/Update/Remove instead of mutating it directly,
 -- or DataManager.Changed won't fire and other systems won't find out.
