@@ -1,0 +1,1 @@
+require(script.Parent.DataStore.DataManager) --initialize DataManager in server
