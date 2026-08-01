@@ -60,7 +60,7 @@ end
 -- Fired as (player, path, newValue) whenever Set/Update/Remove changes data.
 -- UI (settings panel, currency HUD, quests later) subscribes instead of polling:
 --   DataManager.Changed:Connect(function(player, path, newValue)
---       if path == "Currency.Leaves" then ... end
+--       if path == "Currency.Leafs" then ... end
 --   end)
 DataManager.Changed = newSignal()
 
@@ -196,10 +196,22 @@ local function setPath(data: any, path: string, value: any)
 	local keys = getKeys(path)
 	local current = data
 	for i = 1, #keys - 1 do
-		current = current[keys[i]]
-		if type(current) ~= "table" then
-			error(`DataManager.Set: invalid path '{path}' (segment '{keys[i]}' is not a table)`)
+		local nextValue = current[keys[i]]
+		if type(nextValue) ~= "table" then
+			-- The live save has something other than a table here, even
+			-- though Template says this segment should be one -- almost
+			-- always stale data left over from before a Template shape
+			-- change (Reconcile only fills in MISSING keys; it never
+			-- fixes one that already exists with the wrong shape).
+			-- Self-heal instead of crashing: a hard error here, called
+			-- from inside something like a currency-charging tier-up,
+			-- would leave the player charged with nothing to show for it
+			-- and the request permanently stuck.
+			warn(`DataManager.Set: '{keys[i]}' in path '{path}' wasn't a table (was {typeof(nextValue)}) — replacing with a fresh table instead of crashing. This usually means old save data predates a Template shape change.`)
+			nextValue = {}
+			current[keys[i]] = nextValue
 		end
+		current = nextValue
 	end
 	current[keys[#keys]] = value
 end
@@ -300,13 +312,41 @@ function DataManager.GetBig(player: Player, path: string): BigNum
 	return BigNumber.Deserialize(DataManager.Get(player, path))
 end
 
+-- Currency.<Name> -> Statistics.TotalValues.Total<Name>Collected. Only
+-- currency paths have a matching lifetime-total stat.
+local function getTotalStatPath(path: string): string?
+	local currencyName = path:match("^Currency%.([%w_]+)$")
+	if not currencyName then
+		return nil
+	end
+	return "Statistics.TotalValues.Total" .. currencyName .. "Collected"
+end
+
 function DataManager.SetBig(player: Player, path: string, value: BigNum): boolean
 	return DataManager.Set(player, path, BigNumber.Serialize(value))
 end
 
+-- Adding currency (or any other Big stat with a matching Total<Name>
+-- entry) bumps BOTH the current balance AND its lifetime total, in one
+-- call: AddCurrency(player, "Leafs", amount) raises Currency.Leafs AND
+-- Statistics.TotalValues.TotalLeafsCollected by the same amount.
+--
+-- Total is ONLY ever touched here, on purpose -- SetBig/SubtractBig never
+-- touch it, so spending currency, or a tier-up reset zeroing it back to
+-- 0, can never lower it. Whatever the currency param is (Leafs, Compost,
+-- Nuts, or anything added later), this covers it automatically as long
+-- as Template has a matching Total<Name>Collected entry -- no new code
+-- needed per currency.
 function DataManager.AddBig(player: Player, path: string, amount: BigNum): BigNum
 	local newValue = BigNumber.Add(DataManager.GetBig(player, path), amount)
 	DataManager.SetBig(player, path, newValue)
+
+	local totalStatPath = getTotalStatPath(path)
+	if totalStatPath and pathExistsInTemplate(totalStatPath) then
+		local newTotal = BigNumber.Add(DataManager.GetBig(player, totalStatPath), amount)
+		DataManager.SetBig(player, totalStatPath, newTotal)
+	end
+
 	return newValue
 end
 
@@ -321,8 +361,8 @@ end
 
 -- ============================================================
 -- Currency helpers
--- Thin wrappers over *Big — kept because AddCurrency(player, "Leaves", ...)
--- reads better at call sites than AddBig(player, "Currency.Leaves", ...)
+-- Thin wrappers over *Big — kept because AddCurrency(player, "Leafs", ...)
+-- reads better at call sites than AddBig(player, "Currency.Leafs", ...)
 -- everywhere in gameplay code.
 -- ============================================================
 
@@ -348,3 +388,4 @@ function DataManager.CanAfford(player: Player, currencyName: string, cost: BigNu
 end
 
 return DataManager
+

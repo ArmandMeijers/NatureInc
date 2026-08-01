@@ -79,4 +79,3 @@ function LiveBind.Watch(getter: () -> any, signals: { AnySignal }, onUpdate: (an
 end
 
 return LiveBind
-

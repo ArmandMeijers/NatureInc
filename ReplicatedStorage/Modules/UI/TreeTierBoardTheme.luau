@@ -3,27 +3,26 @@
 	TreeTierBoardTheme.luau
 
 	Two visual presets for TreeTierBoardUI, kept as data instead of two
-	copies of the whole UI module — same board logic (currency, button
+	copies of the whole UI module -- same board logic (currency, button
 	state, LiveBind wiring) either way, just different colors/layout
 	knobs. Pick per-board by setting a "BoardStyle" attribute (string:
 	"Glass" or "Classic") on the board Part in Studio; unset defaults to
-	"Glass". No code change needed to preview both — just tag two
-	different board Parts with different attributes.
+	"Glass".
 
-	Glass: fully see-through panel (the board's own translucent Part IS
-	the background), thick white border, a green/white gradient banner
-	behind "Tier X", white boost text with a black outline, and a button
-	that's always white with the state carried by its TEXT color
-	("Tier Up" green / "Can't Tier Up" red / "Maxed Out" grey).
-
-	Classic: a lightly frosted white card (still translucent, just less
-	so — closer to the reference screenshot), a thin green border, plain
-	green header text, green/gold boost rows, and a button whose PILL
-	color carries the state instead (green/red/grey), with the text
-	staying a fixed dark color.
+	ButtonStates holds one {Background, Text, Stroke?} triple per button
+	state (CanAfford / CannotAfford / Maxed) -- both the pill color AND
+	the text color carry the state now, with an optional black outline on
+	the text for definition against a bright/glass background. Stroke is
+	optional per state; omit it for a theme that doesn't want one.
 
 	Location: ReplicatedStorage/Modules/UI/TreeTierBoardTheme.luau
 ]]
+
+export type ButtonStateStyle = {
+	Background: Color3,
+	Text: Color3,
+	Stroke: Color3?,
+}
 
 export type BoardTheme = {
 	PanelBackgroundColor3: Color3,
@@ -47,26 +46,19 @@ export type BoardTheme = {
 	CostTextColor: Color3,
 	CostStrokeColor: Color3,
 
-	-- Button: either the background stays fixed and TEXT color carries
-	-- state (Glass), or the background itself carries state and text
-	-- stays fixed (Classic). Only the relevant fields need to be set.
-	ButtonUsesTextColorForState: boolean,
-	ButtonBackground: Color3?,
-	ButtonBorder: Color3?,
-	ButtonTextCanAfford: Color3?,
-	ButtonTextCannotAfford: Color3?,
-	ButtonTextMaxed: Color3?,
-	ButtonBackgroundCanAfford: Color3?,
-	ButtonBackgroundCannotAfford: Color3?,
-	ButtonBackgroundMaxed: Color3?,
-	ButtonTextColor: Color3?,
+	ButtonBorder: Color3?, -- the pill's own outer border, separate from per-state text stroke
+	ButtonStates: {
+		CanAfford: ButtonStateStyle,
+		CannotAfford: ButtonStateStyle,
+		Maxed: ButtonStateStyle,
+	},
 }
 
 local TreeTierBoardTheme: { [string]: BoardTheme } = {}
 
 TreeTierBoardTheme.Glass = {
 	PanelBackgroundColor3 = Color3.fromRGB(255, 255, 255),
-	PanelBackgroundTransparency = 1,
+	PanelBackgroundTransparency = 0.88,
 
 	BorderColor = Color3.fromRGB(255, 255, 255),
 	BorderThickness = 5,
@@ -74,7 +66,7 @@ TreeTierBoardTheme.Glass = {
 	HeaderStyle = "banner",
 	HeaderGradientStart = Color3.fromRGB(255, 255, 255),
 	HeaderGradientEnd = Color3.fromRGB(120, 210, 140),
-	HeaderTextColor = Color3.fromRGB(26, 54, 32),
+	HeaderTextColor = Color3.fromRGB(20, 110, 55),
 	HeaderStrokeColor = Color3.fromRGB(255, 255, 255),
 
 	DividerColor = Color3.fromRGB(170, 220, 180),
@@ -85,12 +77,24 @@ TreeTierBoardTheme.Glass = {
 	CostTextColor = Color3.fromRGB(255, 236, 190),
 	CostStrokeColor = Color3.fromRGB(255, 255, 255),
 
-	ButtonUsesTextColorForState = true,
-	ButtonBackground = Color3.fromRGB(255, 255, 255),
-	ButtonBorder = Color3.fromRGB(70, 150, 95),
-	ButtonTextCanAfford = Color3.fromRGB(46, 150, 75),
-	ButtonTextCannotAfford = Color3.fromRGB(190, 75, 60),
-	ButtonTextMaxed = Color3.fromRGB(130, 130, 130),
+	ButtonBorder = nil,
+	ButtonStates = {
+		CanAfford = {
+			Background = Color3.fromRGB(200, 235, 205),
+			Text = Color3.fromRGB(30, 110, 55),
+			Stroke = Color3.fromRGB(15, 15, 15),
+		},
+		CannotAfford = {
+			Background = Color3.fromRGB(240, 205, 200),
+			Text = Color3.fromRGB(150, 45, 40),
+			Stroke = Color3.fromRGB(15, 15, 15),
+		},
+		Maxed = {
+			Background = Color3.fromRGB(225, 225, 225),
+			Text = Color3.fromRGB(90, 90, 90),
+			Stroke = Color3.fromRGB(15, 15, 15),
+		},
+	},
 }
 
 TreeTierBoardTheme.Classic = {
@@ -113,11 +117,12 @@ TreeTierBoardTheme.Classic = {
 	CostTextColor = Color3.fromRGB(70, 90, 75),
 	CostStrokeColor = Color3.fromRGB(255, 255, 255),
 
-	ButtonUsesTextColorForState = false,
-	ButtonBackgroundCanAfford = Color3.fromRGB(120, 210, 140),
-	ButtonBackgroundCannotAfford = Color3.fromRGB(225, 140, 130),
-	ButtonBackgroundMaxed = Color3.fromRGB(210, 210, 210),
-	ButtonTextColor = Color3.fromRGB(35, 45, 35),
+	ButtonBorder = nil,
+	ButtonStates = {
+		CanAfford = { Background = Color3.fromRGB(120, 210, 140), Text = Color3.fromRGB(35, 45, 35) },
+		CannotAfford = { Background = Color3.fromRGB(225, 140, 130), Text = Color3.fromRGB(35, 45, 35) },
+		Maxed = { Background = Color3.fromRGB(210, 210, 210), Text = Color3.fromRGB(35, 45, 35) },
+	},
 }
 
 return TreeTierBoardTheme

@@ -2,21 +2,39 @@
 	TreeTierBoardUI.luau
 
 	Mounts the physical-but-local Tree Tier board: a SurfaceGui adorned to
-	a world Part but parented into THIS client's PlayerGui — so the board
+	a world Part but parented into THIS client's PlayerGui -- so the board
 	looks physical and shared, but every player sees their own tier data
 	on it. Mounted by BoardLoaderController for any Part with
 	BoardType == "TreeTier".
 
-	The board Part itself should be white + translucent (Glass material —
-	set in the kit builder). This GUI draws NO background of its own —
-	text sits directly on that glass, with a UIStroke per label for
-	legibility instead of a solid panel fill.
+	Visuals live in TreeTierBoardTheme (ReplicatedStorage/Modules/UI) --
+	this file builds ONE board using whichever theme is passed in, so
+	"Glass" and "Classic" aren't two copies of this logic drifting apart
+	over time. BoardLoaderController picks the theme from the board
+	Part's "BoardStyle" attribute (defaults to "Glass" if unset).
 
-	Currency name text (Leafs / Compost / Nuts) pulls its color from
-	ReplicatedStorage.CurrencyVisuals.<key> if a UIGradient exists there —
-	that's the same folder/name convention your CurrencyVisuals folder
-	already uses, so once you drop gradients in there this picks them up
-	automatically. Falls back to a plain forest green until then.
+	Currency is fully dynamic -- nothing here assumes Compost. The cost
+	line, the afford check, and the button state all come from
+	TreeTierState.Balance / .BalanceCurrency, which track whatever
+	currency TreeTierConfig says the NEXT tier actually costs.
+
+	The Tier Up button's pill color AND text color both carry state now
+	(CanAfford / CannotAfford / Maxed), each theme-defined per state, with
+	an optional black text outline for definition against a bright/glass
+	background. Text says exactly what's going on ("RESET" / "CAN'T
+	RESET" / "MAX") instead of relying on color alone -- "RESET" because
+	tiering up is literally what resets your Leafs/Compost back to zero.
+
+	Cost text is wired through LiveBind (ReplicatedStorage/Modules/UI/
+	LiveBind) so it re-formats immediately if the player changes their
+	Number Notation setting mid-session, on top of updating on tier/
+	balance changes -- one Bind call, no manual settings-signal wiring.
+
+	Boost row NAME text (Leafs/Compost/Nuts) pulls its color from
+	ReplicatedStorage.CurrencyVisuals.<name>.<name>GRAD when that
+	UIGradient exists -- each currency renders in its own branded
+	gradient instead of a flat color. Falls back to the theme's flat
+	BoostNameColor for any currency without art yet.
 
 	Location: StarterPlayer/StarterPlayerScripts/BoardLoader/Modules/TreeTierBoardUI.luau
 ]]
@@ -27,25 +45,16 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local BigNumber = require(ReplicatedStorage.Modules.BigNumber)
 local TreeTierConfig = require(ReplicatedStorage.Modules.TreeTierConfig)
 local TreeTierState = require(ReplicatedStorage.Modules.TreeTierState)
+local SettingsState = require(ReplicatedStorage.Modules.SettingsState)
+local LiveBind = require(ReplicatedStorage.Modules.UI.LiveBind)
+local BoardThemes = require(ReplicatedStorage.Modules.UI.TreeTierBoardTheme)
 
 local LocalPlayer = Players.LocalPlayer
 
--- Names here match ReplicatedStorage.CurrencyVisuals.<name> exactly, so
--- lookups just index straight in.
+local currencyVisuals = ReplicatedStorage:WaitForChild("CurrencyVisuals")
+
 local DISPLAY_ORDER = { "Leafs", "Compost", "Nuts" }
-
-local COLORS = {
-	Border = Color3.fromRGB(32, 58, 38), -- dark forest green frame
-	Header = Color3.fromRGB(255, 255, 255),
-	RowLabelFallback = Color3.fromRGB(120, 210, 135), -- used until CurrencyVisuals has a gradient for that key
-	RowValue = Color3.fromRGB(255, 214, 110), -- warm gold for the numbers/arrows
-	TextStroke = Color3.fromRGB(18, 28, 18), -- near-black outline so text reads on bright glass
-	CannotAfford = Color3.fromRGB(178, 88, 68),
-	CanAfford = Color3.fromRGB(78, 178, 102),
-	Maxed = Color3.fromRGB(128, 128, 120),
-}
-
-local currencyVisualsRoot = ReplicatedStorage:FindFirstChild("CurrencyVisuals")
+local DEFAULT_STYLE = "Glass"
 
 local function formatBoost(entry)
 	if not entry then
@@ -58,38 +67,37 @@ local function formatBoost(entry)
 	return tostring(entry.Amount) .. "x" -- Multiplicative
 end
 
-local function addStroke(label: TextLabel, thickness: number?)
+local function addStroke(label: TextLabel, color: Color3, thickness: number?)
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = thickness or 1.25
-	stroke.Color = COLORS.TextStroke
+	stroke.Color = color
 	stroke.Parent = label
 end
 
--- Looks for ReplicatedStorage.CurrencyVisuals.<key>'s UIGradient and clones
--- it onto the label; falls back to a flat color if that currency doesn't
--- have visuals set up yet.
-local function applyCurrencyTextStyle(label: TextLabel, key: string)
-	local existing = label:FindFirstChild("CurrencyGradient")
-	if existing then
-		existing:Destroy()
+-- Looks for ReplicatedStorage.CurrencyVisuals.<name>.<name>GRAD (e.g.
+-- CurrencyVisuals.Leafs.LeafsGRAD) and, if it's a real UIGradient, clones
+-- it onto `label` so this currency's name always renders in its own
+-- branded gradient instead of a flat theme color. Falls back silently
+-- (theme color stays as-is) for any currency that doesn't have art yet --
+-- e.g. Nuts still growing out its visuals per your CurrencyVisuals tree.
+local function applyCurrencyGradient(label: TextLabel, currencyName: string): boolean
+	local currencyFolder = currencyVisuals:FindFirstChild(currencyName)
+	local gradientTemplate = currencyFolder and currencyFolder:FindFirstChild(currencyName .. "GRAD")
+	if gradientTemplate and gradientTemplate:IsA("UIGradient") then
+		label.TextColor3 = Color3.new(1, 1, 1) -- gradient renders truest against a white base
+		local gradient = gradientTemplate:Clone()
+		gradient.Parent = label
+		return true
 	end
-
-	local sourceFolder = currencyVisualsRoot and currencyVisualsRoot:FindFirstChild(key)
-	local sourceGradient = sourceFolder and sourceFolder:FindFirstChildOfClass("UIGradient")
-
-	if sourceGradient then
-		local clone = sourceGradient:Clone()
-		clone.Name = "CurrencyGradient"
-		clone.Parent = label
-		label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	else
-		label.TextColor3 = COLORS.RowLabelFallback
-	end
+	return false
 end
 
 local TreeTierBoardUI = {}
 
 function TreeTierBoardUI.Mount(boardPart: BasePart)
+	local styleName = boardPart:GetAttribute("BoardStyle")
+	local theme = (styleName and BoardThemes[styleName]) or BoardThemes[DEFAULT_STYLE]
+
 	local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 	local gui = Instance.new("SurfaceGui")
@@ -101,17 +109,16 @@ function TreeTierBoardUI.Mount(boardPart: BasePart)
 	gui.ResetOnSpawn = false
 	gui.Parent = playerGui
 
-	-- No background of our own — the board Part (white, translucent glass)
-	-- IS the background. This frame only exists to lay children out.
 	local panel = Instance.new("Frame")
 	panel.Name = "Panel"
 	panel.Size = UDim2.fromScale(1, 1)
-	panel.BackgroundTransparency = 1
+	panel.BackgroundColor3 = theme.PanelBackgroundColor3
+	panel.BackgroundTransparency = theme.PanelBackgroundTransparency
 	panel.Parent = gui
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = COLORS.Border
-	stroke.Thickness = 3
+	stroke.Color = theme.BorderColor
+	stroke.Thickness = theme.BorderThickness
 	stroke.Parent = panel
 
 	local corner = Instance.new("UICorner")
@@ -130,29 +137,52 @@ function TreeTierBoardUI.Mount(boardPart: BasePart)
 	layout.Padding = UDim.new(0, 10)
 	layout.Parent = panel
 
-	-- Header ---------------------------------------------------------------
-	local header = Instance.new("TextLabel")
+	-- Header -----------------------------------------------------------
+	local header: TextLabel
+	if theme.HeaderStyle == "banner" then
+		local headerBanner = Instance.new("Frame")
+		headerBanner.Name = "HeaderBanner"
+		headerBanner.LayoutOrder = 1
+		headerBanner.Size = UDim2.new(1, 0, 0, 46)
+		headerBanner.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		headerBanner.BorderSizePixel = 0
+		headerBanner.Parent = panel
+
+		local headerCorner = Instance.new("UICorner")
+		headerCorner.CornerRadius = UDim.new(0, 10)
+		headerCorner.Parent = headerBanner
+
+		local headerGradient = Instance.new("UIGradient")
+		headerGradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, theme.HeaderGradientStart or Color3.fromRGB(255, 255, 255)),
+			ColorSequenceKeypoint.new(1, theme.HeaderGradientEnd or Color3.fromRGB(120, 210, 140)),
+		})
+		headerGradient.Rotation = 90
+		headerGradient.Parent = headerBanner
+
+		header = Instance.new("TextLabel")
+		header.Size = UDim2.fromScale(1, 1)
+		header.BackgroundTransparency = 1
+		header.Parent = headerBanner
+	else
+		header = Instance.new("TextLabel")
+		header.LayoutOrder = 1
+		header.Size = UDim2.new(1, 0, 0, 40)
+		header.BackgroundTransparency = 1
+		header.Parent = panel
+	end
 	header.Name = "Header"
-	header.LayoutOrder = 1
-	header.Size = UDim2.new(1, 0, 0, 44)
-	header.BackgroundTransparency = 1
 	header.Font = Enum.Font.FredokaOne
-	header.TextColor3 = COLORS.Header
+	header.TextColor3 = theme.HeaderTextColor
 	header.TextScaled = true
 	header.Text = "Tier 1"
-	header.Parent = panel
-	addStroke(header, 1.75)
-
-	local headerGradient = Instance.new("UIGradient")
-	headerGradient.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(150, 235, 170))
-	headerGradient.Rotation = 90
-	headerGradient.Parent = header
+	addStroke(header, theme.HeaderStrokeColor, 1.25)
 
 	local divider = Instance.new("Frame")
 	divider.Name = "Divider"
 	divider.LayoutOrder = 2
 	divider.Size = UDim2.new(1, 0, 0, 2)
-	divider.BackgroundColor3 = COLORS.Border
+	divider.BackgroundColor3 = theme.DividerColor
 	divider.BorderSizePixel = 0
 	divider.Parent = panel
 
@@ -164,7 +194,7 @@ function TreeTierBoardUI.Mount(boardPart: BasePart)
 	boostList.BackgroundTransparency = 1
 	boostList.BorderSizePixel = 0
 	boostList.ScrollBarThickness = 6
-	boostList.ScrollBarImageColor3 = COLORS.Border
+	boostList.ScrollBarImageColor3 = theme.DividerColor
 	boostList.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	boostList.CanvasSize = UDim2.new(0, 0, 0, 0)
 	boostList.Parent = panel
@@ -178,14 +208,14 @@ function TreeTierBoardUI.Mount(boardPart: BasePart)
 	local costLabel = Instance.new("TextLabel")
 	costLabel.Name = "CostLabel"
 	costLabel.LayoutOrder = 4
-	costLabel.Size = UDim2.new(1, 0, 0, 32)
+	costLabel.Size = UDim2.new(1, 0, 0, 40)
 	costLabel.BackgroundTransparency = 1
 	costLabel.Font = Enum.Font.GothamMedium
-	costLabel.TextColor3 = COLORS.Header
+	costLabel.TextColor3 = theme.CostTextColor
 	costLabel.TextScaled = true
 	costLabel.Text = ""
 	costLabel.Parent = panel
-	addStroke(costLabel)
+	addStroke(costLabel, theme.CostStrokeColor)
 
 	local button = Instance.new("TextButton")
 	button.Name = "TierUpButton"
@@ -194,19 +224,45 @@ function TreeTierBoardUI.Mount(boardPart: BasePart)
 	button.Font = Enum.Font.FredokaOne
 	button.TextScaled = true
 	button.AutoButtonColor = false
-	button.Text = "Tier Up"
+	button.Active = true
+	button.Text = "RESET"
 	button.Parent = panel
 
 	local buttonCorner = Instance.new("UICorner")
 	buttonCorner.CornerRadius = UDim.new(0, 10)
 	buttonCorner.Parent = button
 
-	local buttonStroke = Instance.new("UIStroke")
-	buttonStroke.Color = COLORS.Border
-	buttonStroke.Thickness = 2
-	buttonStroke.Parent = button
+	if theme.ButtonBorder then
+		local buttonStroke = Instance.new("UIStroke")
+		buttonStroke.Color = theme.ButtonBorder
+		buttonStroke.Thickness = 2
+		buttonStroke.Parent = button
+	end
+
+	local buttonTextStroke: UIStroke? = nil
 
 	local buttonState = "CannotAfford"
+
+	local function setButtonState(state: "CanAfford" | "CannotAfford" | "Maxed", text: string)
+		buttonState = state
+		button.Text = text
+
+		local style = theme.ButtonStates[state]
+		button.BackgroundColor3 = style.Background
+		button.TextColor3 = style.Text
+
+		if style.Stroke then
+			if not buttonTextStroke then
+				buttonTextStroke = Instance.new("UIStroke")
+				buttonTextStroke.Thickness = 1.25
+				buttonTextStroke.Parent = button
+			end
+			buttonTextStroke.Color = style.Stroke
+			buttonTextStroke.Enabled = true
+		elseif buttonTextStroke then
+			buttonTextStroke.Enabled = false
+		end
+	end
 
 	local function buildRow(name: string, current, next_)
 		local row = Instance.new("Frame")
@@ -217,34 +273,36 @@ function TreeTierBoardUI.Mount(boardPart: BasePart)
 		nameLabel.Size = UDim2.new(0.4, 0, 1, 0)
 		nameLabel.BackgroundTransparency = 1
 		nameLabel.Font = Enum.Font.GothamBold
+		nameLabel.TextColor3 = theme.BoostNameColor or theme.BoostTextColor or Color3.fromRGB(255, 255, 255)
 		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
 		nameLabel.TextScaled = true
 		nameLabel.Text = name
 		nameLabel.Parent = row
-		addStroke(nameLabel)
-		applyCurrencyTextStyle(nameLabel, name)
+		addStroke(nameLabel, theme.BoostStrokeColor, 1.25)
+		applyCurrencyGradient(nameLabel, name)
 
 		local valueLabel = Instance.new("TextLabel")
 		valueLabel.Size = UDim2.new(0.6, 0, 1, 0)
 		valueLabel.Position = UDim2.new(0.4, 0, 0, 0)
 		valueLabel.BackgroundTransparency = 1
 		valueLabel.Font = Enum.Font.GothamBold
-		valueLabel.TextColor3 = COLORS.RowValue
+		valueLabel.TextColor3 = theme.BoostValueColor or theme.BoostTextColor or Color3.fromRGB(255, 255, 255)
 		valueLabel.TextXAlignment = Enum.TextXAlignment.Right
 		valueLabel.TextScaled = true
 		valueLabel.Text = if next_ then formatBoost(current) .. "  ->  " .. formatBoost(next_) else formatBoost(current)
 		valueLabel.Parent = row
-		addStroke(valueLabel)
+		addStroke(valueLabel, theme.BoostStrokeColor, 1.25)
 
 		return row
 	end
 
-	local function refresh()
+	-- Rebuilds the boost rows and sets the button's text/color/state.
+	-- Header text and cost text are handled separately below via
+	-- LiveBind -- those are simple property updates, not a row rebuild.
+	local function refreshBoard()
 		local tier = TreeTierState.Tier
 		local currentData = TreeTierConfig[tier]
 		local nextData = TreeTierConfig[tier + 1]
-
-		header.Text = "Tier " .. tier
 
 		for _, child in boostList:GetChildren() do
 			if child:IsA("Frame") then
@@ -263,23 +321,12 @@ function TreeTierBoardUI.Mount(boardPart: BasePart)
 		end
 
 		if not nextData then
-			costLabel.Text = ""
-			buttonState = "Maxed"
-			button.Text = "Maxed"
-			button.BackgroundColor3 = COLORS.Maxed
+			setButtonState("Maxed", "MAX")
+		elseif TreeTierState.BalanceCurrency == nextData.Cost.Currency
+			and BigNumber.GreaterThanOrEqual(TreeTierState.Balance, nextData.Cost.Amount) then
+			setButtonState("CanAfford", "RESET")
 		else
-			local cost = nextData.Cost
-			costLabel.Text = "Cost: " .. BigNumber.Format(cost.Amount) .. " " .. cost.Currency
-
-			if BigNumber.GreaterThanOrEqual(TreeTierState.Compost, cost.Amount) then
-				buttonState = "CanAfford"
-				button.Text = "Tier Up"
-				button.BackgroundColor3 = COLORS.CanAfford
-			else
-				buttonState = "CannotAfford"
-				button.Text = "Tier Up"
-				button.BackgroundColor3 = COLORS.CannotAfford
-			end
+			setButtonState("CannotAfford", "CAN'T RESET")
 		end
 	end
 
@@ -289,9 +336,26 @@ function TreeTierBoardUI.Mount(boardPart: BasePart)
 		end
 	end)
 
-	TreeTierState.TierChanged.Event:Connect(refresh)
-	TreeTierState.CompostChanged.Event:Connect(refresh)
-	refresh()
+	TreeTierState.TierChanged.Event:Connect(refreshBoard)
+	TreeTierState.BalanceChanged.Event:Connect(refreshBoard)
+	refreshBoard()
+
+	-- Single-property bindings via LiveBind, instead of more hand-rolled
+	-- refresh() wiring. Cost text also listens for SettingsState.Changed,
+	-- so it reformats immediately if the player flips Number Notation
+	-- mid-session -- no other file needs to know about that.
+	LiveBind.Bind(header, "Text", function()
+		return "Tier " .. TreeTierState.Tier
+	end, { TreeTierState.TierChanged.Event })
+
+	LiveBind.Bind(costLabel, "Text", function()
+		local nextData = TreeTierConfig[TreeTierState.Tier + 1]
+		if not nextData then
+			return ""
+		end
+		local notation = SettingsState.Get("General.NumberNotation")
+		return "Cost: " .. BigNumber.Format(nextData.Cost.Amount, notation) .. " " .. nextData.Cost.Currency
+	end, { TreeTierState.TierChanged.Event, TreeTierState.BalanceChanged.Event, SettingsState.Changed })
 end
 
 return TreeTierBoardUI

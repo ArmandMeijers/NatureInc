@@ -30,6 +30,7 @@ local TreeTierConfig = {}
 local DefaultResets = {
 	"Currency.Leafs",
 	"Currency.Compost",
+	"Currency.Nuts",
 }
 
 TreeTierConfig[1] = {
@@ -46,8 +47,8 @@ TreeTierConfig[1] = {
 TreeTierConfig[2] = {
 	Cost = { Currency = "Compost", Amount = BigNumber.FromNumber(50000) },
 	Boosts = {
-		Leafs = { Amount = 3, Type = "Multiplicative" },
-		Compost = { Amount = 1.5, Type = "Multiplicative" },
+		Leafs = { Amount = 5, Type = "Multiplicative" },
+		Compost = { Amount = 2, Type = "Multiplicative" },
 	},
 	Unlocks = {
 		Runes = { LeafRune = true },
@@ -59,8 +60,8 @@ TreeTierConfig[2] = {
 TreeTierConfig[3] = {
 	Cost = { Currency = "Compost", Amount = BigNumber.FromNumber(500000) },
 	Boosts = {
-		Leafs = { Amount = 6, Type = "Multiplicative" },
-		Compost = { Amount = 2, Type = "Multiplicative" },
+		Leafs = { Amount = 10, Type = "Multiplicative" },
+		Compost = { Amount = 5, Type = "Multiplicative" },
 		Nuts = { Amount = 1, Type = "Multiplicative" },
 	},
 	Unlocks = {
