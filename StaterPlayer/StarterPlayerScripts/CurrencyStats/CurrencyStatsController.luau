@@ -5,21 +5,30 @@
 	Drives the CurrencyStatsGui rows that already exist under StarterGui
 	(built once by the deploy command, then yours to edit by hand in
 	Studio -- move them, recolor them, resize the pill, whatever). This
-	script does NOT build any UI. It finds each row by name and binds two
+	script does NOT build any UI. It finds each row by name and binds
 	properties on it via LiveBind:
 
 		<Name>Row.AmountLabel.Text     -- formatted balance, notation-aware
-		<Name>Row.Visible              -- true once lifetime total > 0
+		<Name>Row.Visible              -- see below
 
-	That's it. Every other property (the row's gradient-fade background,
-	the currency-branded text gradient, the icon image, position, size)
-	lives on the actual GUI objects, not in this script -- so redesigning
-	the look later never means touching Lua again.
+	A row is visible when BOTH of these are true:
+	  1. Lifetime total collected > 0 (see DataManager.SetBig) -- so a row
+	     that's appeared never disappears just because you spent the
+	     currency back down to 0.
+	  2. Settings.CurrencyView.<Name> isn't explicitly false -- this is
+	     the actual wiring for what SettingState.luau's own doc comment
+	     already promised ("show/hide a currency display when
+	     CurrencyView.Leafs is flipped") but nothing ever implemented.
+	     Turning a currency off in the settings menu now actually hides
+	     its row here, instead of the toggle changing color with no
+	     effect on the display.
 
-	Row visibility is driven by TOTAL ever collected, not current balance,
-	per how CurrencyStatsState/CurrencyStatsService report it: total only
-	ever goes up (see DataManager.SetBig), so a row that's appeared never
-	disappears just because you spent the currency back down to 0.
+	This script also keeps the ScrollingFrame pinned to the BOTTOM of its
+	canvas whenever the canvas is resized (a row appearing/disappearing
+	changes the total content height) -- Panel is anchored bottom-left and
+	grows upward, so "pinned to bottom" means whatever's near the anchor
+	corner stays in view by default, and overflow at the top is what
+	needs a scroll up to reach, matching how the rows are ordered.
 
 	Location: StarterPlayer/StarterPlayerScripts/CurrencyStats/CurrencyStatsController.client.luau
 ]]
@@ -37,9 +46,20 @@ local LocalPlayer = Players.LocalPlayer
 local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local statsGui = playerGui:WaitForChild("CurrencyStatsGui")
-local panel = statsGui:WaitForChild("Panel")
+local panel = statsGui:WaitForChild("Panel") :: ScrollingFrame
 
 local ZERO = BigNumber.new(0, 0)
+
+-- Keeps the anchor corner (bottom-left) in view whenever the canvas
+-- height changes -- i.e. whenever a row's Visible toggles and the
+-- UIListLayout recomputes AbsoluteContentSize. Native Roblox signal, not
+-- app data, so it doesn't go through LiveBind.
+local function pinScrollToBottom()
+	local overflow = panel.AbsoluteCanvasSize.Y - panel.AbsoluteWindowSize.Y
+	panel.CanvasPosition = Vector2.new(0, math.max(0, overflow))
+end
+panel:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(pinScrollToBottom)
+pinScrollToBottom()
 
 for _, currencyName in CurrencyOrder do
 	local row = panel:FindFirstChild(currencyName .. "Row")
@@ -62,7 +82,8 @@ for _, currencyName in CurrencyOrder do
 
 	LiveBind.Bind(row, "Visible", function()
 		local total = CurrencyStatsState.Totals[currencyName] or ZERO
-		return BigNumber.GreaterThan(total, ZERO)
-	end, { CurrencyStatsState.Changed.Event })
+		local hasCollectedAny = BigNumber.GreaterThan(total, ZERO)
+		local viewEnabled = SettingsState.Get("CurrencyView." .. currencyName) ~= false
+		return hasCollectedAny and viewEnabled
+	end, { CurrencyStatsState.Changed.Event, SettingsState.Changed })
 end
-

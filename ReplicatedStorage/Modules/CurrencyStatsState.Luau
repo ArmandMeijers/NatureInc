@@ -89,4 +89,3 @@ task.spawn(function()
 end)
 
 return CurrencyStatsState
-
