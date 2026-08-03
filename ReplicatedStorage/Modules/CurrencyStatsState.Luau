@@ -7,6 +7,15 @@
 	as TreeTierState/SettingsState: whatever needs live currency data (the
 	stats menu) requires this once instead of polling the server itself.
 
+	Two sync paths, on purpose:
+	  1. CurrencyBalanceChanged (pushed by CurrencyNetworkBridge the
+	     instant DataManager changes a currency/total server-side) —
+	     this is what makes collecting a leaf show up in the HUD
+	     immediately instead of up to a second later.
+	  2. GetCurrencyStats (polled, slow) — a reconciliation safety net in
+	     case a push ever gets missed (e.g. briefly disconnected), not
+	     the primary path anymore.
+
 	Location: ReplicatedStorage/Modules/CurrencyStatsState.luau
 ]]
 
@@ -16,7 +25,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local BigNumber = require(ReplicatedStorage.Modules.BigNumber)
 local CurrencyOrder = require(ReplicatedStorage.Modules.CurrencyOrder)
 
-local GetCurrencyStats = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Currency"):WaitForChild("GetCurrencyStats")
+local currencyEvents = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Currency")
+local GetCurrencyStats = currencyEvents:WaitForChild("GetCurrencyStats")
+local CurrencyBalanceChanged = currencyEvents:WaitForChild("CurrencyBalanceChanged")
 
 local CurrencyStatsState = {}
 
@@ -66,9 +77,32 @@ local function applyBundle(bundle)
 	end
 end
 
--- Initial fetch, then a light poll -- same pattern as TreeTierState.
--- Swap for a push from wherever currencies actually change once that
--- exists; this is the simplest thing that works today.
+-- Handles a single pushed (path, value) pair — either "Currency.<Name>"
+-- or "Statistics.TotalValues.Total<Name>Collected". Anything else (a
+-- currency not in CurrencyOrder, or an unrelated stat) is ignored.
+CurrencyBalanceChanged.OnClientEvent:Connect(function(path: string, value: any)
+	local currencyName = path:match("^Currency%.([%w_]+)$")
+	if currencyName and table.find(CurrencyOrder, currencyName) then
+		local balance = BigNumber.Deserialize(value)
+		if not BigNumber.Equals(balance, CurrencyStatsState.Balances[currencyName]) then
+			CurrencyStatsState.Balances[currencyName] = balance
+			CurrencyStatsState.Changed:Fire(currencyName)
+		end
+		return
+	end
+
+	local totalCurrencyName = path:match("^Statistics%.TotalValues%.Total([%w_]+)Collected$")
+	if totalCurrencyName and table.find(CurrencyOrder, totalCurrencyName) then
+		local total = BigNumber.Deserialize(value)
+		if not BigNumber.Equals(total, CurrencyStatsState.Totals[totalCurrencyName]) then
+			CurrencyStatsState.Totals[totalCurrencyName] = total
+			CurrencyStatsState.Changed:Fire(totalCurrencyName)
+		end
+	end
+end)
+
+-- Initial fetch, then a slow reconciliation poll — the push above is the
+-- fast path now, this is just a safety net.
 task.spawn(function()
 	local ok, bundle = pcall(function()
 		return GetCurrencyStats:InvokeServer()
@@ -78,7 +112,7 @@ task.spawn(function()
 	end
 
 	while true do
-		task.wait(1)
+		task.wait(10)
 		local success, result = pcall(function()
 			return GetCurrencyStats:InvokeServer()
 		end)
