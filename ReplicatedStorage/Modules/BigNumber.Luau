@@ -362,16 +362,29 @@ end
 -- Main display function.
 -- notationType: "scientific" or "abbreviation" — pass in whatever the
 -- player's settings value currently is.
+-- Formats numbers without unnecessary trailing zeros.
+local function formatDisplayNumber(value: number): string
+	-- Whole number
+	if math.abs(value - math.round(value)) < 1e-9 then
+		return tostring(math.round(value))
+	end
+
+	-- Up to 2 decimal places, trimming trailing zeros
+	return string.format("%.2f", value):gsub("%.?0+$", "")
+end
+
+-- Main display function.
+-- notationType: "scientific" or "abbreviation"
 function BigNumber.Format(a: BigNum, notationType: string?): string
 	local mode = notationType or "scientific"
 	local sign = a.mantissa < 0 and "-" or ""
 	local mantissa = math.abs(a.mantissa)
 	local exponent = a.exponent
 
-	-- Below 1000, just show the plain number regardless of mode.
+	-- Below 1000, show the plain number.
 	if exponent < 3 then
 		local value = mantissa * (10 ^ exponent)
-		return sign .. formatSmallNumber(value)
+		return sign .. formatDisplayNumber(value)
 	end
 
 	if mode == "abbreviation" then
@@ -379,8 +392,7 @@ function BigNumber.Format(a: BigNum, notationType: string?): string
 		if suffix and tierExponent then
 			local scaledMantissa = mantissa * (10 ^ (exponent - tierExponent))
 
-			-- Guard against rounding up into the next tier at display time,
-			-- e.g. 999.999K should read "1.00M", not "1000.00K".
+			-- Round into the next suffix if needed.
 			if scaledMantissa >= 999.995 then
 				local nextSuffix, nextTierExponent = BigNumber.GetSuffix(exponent + 3)
 				if nextSuffix and nextTierExponent then
@@ -389,13 +401,12 @@ function BigNumber.Format(a: BigNum, notationType: string?): string
 				end
 			end
 
-			return sign .. string.format("%.2f%s", scaledMantissa, suffix)
+			return sign .. formatDisplayNumber(scaledMantissa) .. " " .. suffix
 		end
-		-- Past Centillion (10^303) — table has no entry, fall back regardless
-		-- of the player's chosen setting.
 	end
 
-	return sign .. string.format("%.2fe%d", mantissa, exponent)
+	-- Fall back to scientific notation.
+	return sign .. formatDisplayNumber(mantissa) .. "e" .. exponent
 end
 
 return BigNumber

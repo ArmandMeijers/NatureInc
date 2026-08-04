@@ -2,29 +2,18 @@
 --[[
 	LeafConfig.luau
 
-	Every tunable number for the leaf spawn/collection loop, in one place.
-	Change anything here and it takes effect everywhere — nothing else in
-	the leaf system hardcodes these.
+	Base values and hard safety limits for the leaf loop. The UPGRADE
+	scheme that used to live here has moved to
+	ReplicatedStorage/Modules/Upgrades/Schema/LeafUpgrades.luau — this
+	file is now only "what does a player with zero upgrades get", plus
+	the ceilings that protect the game from runaway values.
 
-	UPGRADE SCHEME
-	Template.Upgrades.LeafUpgrades already has four level counters
-	(LeafAdd, LeafMult, LeafSpawnRate, LeafCapacity) plus a fifth added
-	here (LeafRadius, for the collection circle). UpgradeScheme below is
-	what turns "level N" into an actual effect, and what STAT each level
-	counter feeds. Stat names are deliberately prefixed "Leaf" --
-	LeafValue / LeafCapacity / LeafSpeed / LeafRadius -- so a future
-	collection board (say, one for Compost) can define its OWN
-	similarly-shaped but distinctly-named scheme without any collision or
-	ambiguity about which board an upgrade belongs to.
-
-	LeafValue is the one stat that goes through BoostMath.Calculate,
-	combined with whatever the tree tier grants for "Leafs" — that's
-	genuinely a multiplier-stacking problem, which is exactly what
-	BoostMath is for. Capacity/Speed/Radius are simple flat bonuses per
-	level (see LeafBoostCalculator), not multiplier stacks, so they're
-	computed directly instead of being forced through BoostMath — using
-	one hammer for every nail here would just make the flat ones harder
-	to read for no real benefit.
+	Stat tags this system reads (all defined in the schema):
+	  LeafValue          currency per leaf collected
+	  LeafCapacity       max leaves on the platform at once
+	  LeafSpawnSpeed     seconds between spawns
+	  LeafCollectionArea collection circle radius
+	  NutChance          chance a spawning leaf is a nut instead
 
 	Location: ReplicatedStorage/Modules/LeafConfig.luau
 ]]
@@ -32,50 +21,46 @@
 local LeafConfig = {}
 
 -- ============================================================
--- Base values (before any upgrades)
+-- Base values (a player with zero upgrades)
 -- ============================================================
 
-LeafConfig.BaseCapacity = 5 -- how many leaves can be on the platform at once
-LeafConfig.MaxCapacity = 500 -- hard ceiling regardless of upgrades — see LeafSpawnController for why this scale is safe
-
-LeafConfig.BaseSpawnInterval = 3 -- seconds between spawns
-LeafConfig.MinSpawnInterval = 0.1 -- floor after upgrades
-
-LeafConfig.BaseCollectionRadius = 5 -- studs
-LeafConfig.MaxCollectionRadius = 30 -- sane ceiling
-
-LeafConfig.BaseLeafValue = 1 -- value of ONE leaf before any multiplier
+LeafConfig.BaseCapacity = 5
+LeafConfig.BaseSpawnInterval = 3
+LeafConfig.BaseCollectionRadius = 5
+LeafConfig.BaseLeafValue = 1
+LeafConfig.BaseNutChance = 0
 
 -- ============================================================
--- Upgrade scheme
--- Maps each Template.Upgrades.LeafUpgrades.* level counter to which
--- stat it affects and how much ONE level is worth. All placeholder
--- numbers — tune freely, nothing else needs to change to match.
+-- Hard limits
 -- ============================================================
 
-export type UpgradeKind = "Additive" | "Multiplicative" | "IntervalReduction"
+LeafConfig.MaxCapacity = 500
+LeafConfig.MinSpawnInterval = 0.01 -- see BULK SPAWNING below
+LeafConfig.MaxCollectionRadius = 30
 
-export type UpgradeDef = {
-	Stat: "LeafValue" | "LeafCapacity" | "LeafSpeed" | "LeafRadius",
-	Kind: UpgradeKind,
-	PerLevel: number,
-}
+-- ============================================================
+-- BULK SPAWNING
+-- At the fastest upgrades, the interval reaches 0.01s -- that's 100
+-- spawns per second. Running an actual timer that fast means ~100
+-- wakeups/second per player doing real work (clone, raycast, place),
+-- which is wasteful and starts costing frames with several players on
+-- a server.
+--
+-- So below BulkThreshold the loop STOPS shortening its wait and starts
+-- spawning in batches instead: it ticks at BulkInterval and places
+-- however many leaves that period earned. 0.01s interval becomes
+-- "10 leaves every 0.1s" rather than "1 leaf every 0.01s". Identical
+-- spawn rate, ~10x fewer wakeups, and it stays correct at any interval
+-- because the batch size is derived from elapsed time, not hardcoded.
+-- ============================================================
 
-LeafConfig.UpgradeScheme = {
-	-- Flat bonus to leaf value, e.g. level 3 = +3 before the multiplier.
-	LeafAdd = { Stat = "LeafValue", Kind = "Additive", PerLevel = 1 },
-	-- Multiplier on leaf value, expressed as +10%/level (linear, not
-	-- compounding — level 3 = 1.3x, not 1.1^3). Combines with the tree
-	-- tier's own Leafs boost via BoostMath.Calculate.
-	LeafMult = { Stat = "LeafValue", Kind = "Multiplicative", PerLevel = 0.1 },
-	-- Shaves this many seconds off the spawn interval per level, down to
-	-- MinSpawnInterval.
-	LeafSpawnRate = { Stat = "LeafSpeed", Kind = "IntervalReduction", PerLevel = 0.1 },
-	-- Extra capacity slots per level.
-	LeafCapacity = { Stat = "LeafCapacity", Kind = "Additive", PerLevel = 1 },
-	-- Extra collection-circle radius (studs) per level.
-	LeafRadius = { Stat = "LeafRadius", Kind = "Additive", PerLevel = 0.5 },
-} :: { [string]: UpgradeDef }
+LeafConfig.BulkThreshold = 0.1 -- intervals faster than this switch to batching
+LeafConfig.BulkInterval = 0.1 -- how often the batched loop ticks
+
+-- Safety valve: never place more than this in a single batch, no matter
+-- how long a frame hitch was. Prevents one lag spike from trying to
+-- place thousands of leaves in one tick and making the hitch worse.
+LeafConfig.MaxBulkPerTick = 50
 
 return LeafConfig
 

@@ -33,6 +33,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local LeafStatsState = require(ReplicatedStorage.Modules.LeafStatsState)
+local LeafConfig = require(ReplicatedStorage.Modules.LeafConfig)
 local LiveBind = require(ReplicatedStorage.Modules.UI.LiveBind)
 
 local LocalPlayer = Players.LocalPlayer
@@ -169,23 +170,61 @@ local function spawnLeaf()
 	local cframe = CFrame.new(point) * rotation * CFrame.new(0, bottomOffset, 0)
 	setCFrame(clone, cframe)
 
+	-- Rolled at SPAWN, not at collection, so the nut is decided the
+	-- moment it appears. Stored as an attribute so it survives on the
+	-- instance itself. Nut art isn't in yet — until it is, a nut is just
+	-- a leaf that pays out as a nut, and swapping in a different model
+	-- here later changes nothing else in this file.
+	local isNut = math.random() < LeafStatsState.NutChance
+	clone:SetAttribute("IsNut", isNut)
+
 	clone.Parent = leavesFolder
 	table.insert(activeLeaves, clone)
 end
 
 -- ============================================================
 -- Spawn loop
--- Re-reads LeafStatsState every cycle, so an upgrade purchased mid-session
--- (capacity or interval) takes effect on the very next cycle without
--- needing to restart this loop.
+-- Re-reads LeafStatsState every cycle, so an upgrade purchased mid-
+-- session takes effect on the very next cycle without restarting.
+--
+-- Two modes (see LeafConfig's BULK SPAWNING note): above the bulk
+-- threshold it's one leaf per wait, exactly as before. Below it, the
+-- loop stops shortening its wait and instead ticks at a fixed
+-- BulkInterval, placing however many leaves the elapsed time earned --
+-- same spawn rate, far fewer wakeups at 0.01s intervals.
 -- ============================================================
 
 task.spawn(function()
+	local lastTick = os.clock()
+
 	while true do
-		if #activeLeaves < LeafStatsState.Capacity then
-			spawnLeaf()
+		local interval = LeafStatsState.SpawnInterval
+		local capacity = LeafStatsState.Capacity
+
+		if interval >= LeafConfig.BulkThreshold then
+			if #activeLeaves < capacity then
+				spawnLeaf()
+			end
+			task.wait(interval)
+			lastTick = os.clock()
+		else
+			local now = os.clock()
+			local elapsed = now - lastTick
+			lastTick = now
+
+			-- Derived from elapsed time rather than a fixed batch size,
+			-- so the rate stays correct even if a frame hitch made this
+			-- tick longer than intended.
+			local earned = math.floor(elapsed / interval)
+			local room = capacity - #activeLeaves
+			local toSpawn = math.min(earned, room, LeafConfig.MaxBulkPerTick)
+
+			for _ = 1, toSpawn do
+				spawnLeaf()
+			end
+
+			task.wait(LeafConfig.BulkInterval)
 		end
-		task.wait(LeafStatsState.SpawnInterval)
 	end
 end)
 
@@ -304,9 +343,10 @@ RunService.Heartbeat:Connect(function()
 		local flatDistance = (Vector3.new(leafPosition.X, 0, leafPosition.Z) - Vector3.new(center.X, 0, center.Z)).Magnitude
 
 		if flatDistance <= radius then
+			local isNut = leaf:GetAttribute("IsNut") == true
 			table.remove(activeLeaves, i)
 			playCollectAnimation(leaf, center)
-			CollectLeaf:FireServer()
+			CollectLeaf:FireServer(isNut)
 		end
 	end
 end)
@@ -360,4 +400,3 @@ if capacityDisplayPart then
 else
 	warn("LeafSpawnController: no 'CapacityDisplay' found under Area1.Area1Spawner -- skipping the capacity display.")
 end
-

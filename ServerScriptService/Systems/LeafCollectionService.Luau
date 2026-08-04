@@ -3,35 +3,25 @@
 
 	Server side of the leaf loop. Two jobs:
 
-	1. GetLeafStats (RemoteFunction) — reports this player's current
-	   capacity/spawn interval/collection radius/value multiplier, all
-	   computed server-side from their upgrade levels + tree tier via
-	   LeafBoostCalculator. The client never computes these itself; it
-	   only ever displays what the server says.
+	1. GetLeafStats (RemoteFunction) — this player's capacity / spawn
+	   interval / collection radius / leaf value / nut chance, all
+	   computed server-side from their upgrade levels + tree tier through
+	   BoostMath. The client never computes these; it only displays what
+	   the server says.
 
-	2. CollectLeaf (RemoteEvent) — the client fires this once per leaf it
-	   destroys locally, and the server awards LeafConfig.BaseLeafValue *
-	   (that player's value multiplier) Leaf currency for it.
+	2. CollectLeaf (RemoteEvent) — the client fires this per leaf it
+	   destroys locally; the server decides what that's worth.
 
-	IMPORTANT — why this needs rate limiting at all:
+	WHY RATE LIMITING:
 	Leaves are entirely client-local (see LeafSpawnController) for
-	performance — the server never tracks where any leaf is, or even how
-	many exist. That means the server has NO way to verify "yes, a leaf
-	really was there to collect." It has to trust the client's word that
-	a collection happened. What it must NOT trust is anything about HOW
-	MUCH that collection is worth — the value multiplier is always looked
-	up server-side, never taken from the client — and it must stop a
-	compromised/scripted client from just firing CollectLeaf in a tight
-	loop for unlimited currency.
-
-	A flat cooldown between calls would break the real, intended pattern
-	of "walk into a pile and collect several leaves in one moment" (the
-	collection circle can legitimately catch many leaves at once). So
-	this uses a token bucket instead: each player has a budget that
-	refills at their own (capacity / interval) rate — their own legitimate
-	max collection rate — capped at their own capacity. Real play, even
-	bursty real play, always stays under budget. Sustained spam beyond
-	what their own upgrades could ever produce gets rejected.
+	performance — the server never tracks where any leaf is or how many
+	exist, so it cannot verify a leaf was really there. It has to trust
+	that a collection happened. What it must NOT trust is how much that's
+	worth: the value is always looked up server-side, never sent by the
+	client. A token bucket then caps the RATE, sized to that player's own
+	capacity/interval, so legitimate bursts (walking into a full
+	platform) always pass while sustained spam beyond what their upgrades
+	could produce gets dropped.
 
 	Location: ServerScriptService/Systems/LeafCollectionService.luau
 ]]
@@ -41,41 +31,61 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local DataManager = require(ServerScriptService.DataStore.DataManager)
+local UpgradeService = require(ServerScriptService.Systems.UpgradeService)
 local BigNumber = require(ReplicatedStorage.Modules.BigNumber)
+local BoostMath = require(ReplicatedStorage.Modules.BoostMath)
 local LeafConfig = require(ReplicatedStorage.Modules.LeafConfig)
-local LeafBoostCalculator = require(ReplicatedStorage.Modules.LeafBoostCalculator)
 
 local remotesFolder = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Leaf")
 local GetLeafStats = remotesFolder:WaitForChild("GetLeafStats")
 local CollectLeaf = remotesFolder:WaitForChild("CollectLeaf")
 
-local function getLevels(player: Player): LeafBoostCalculator.LeafLevels
-	return {
-		LeafAdd = DataManager.Get(player, "Upgrades.LeafUpgrades.LeafAdd") or 0,
-		LeafMult = DataManager.Get(player, "Upgrades.LeafUpgrades.LeafMult") or 0,
-		LeafSpawnRate = DataManager.Get(player, "Upgrades.LeafUpgrades.LeafSpawnRate") or 0,
-		LeafCapacity = DataManager.Get(player, "Upgrades.LeafUpgrades.LeafCapacity") or 0,
-		LeafRadius = DataManager.Get(player, "Upgrades.LeafUpgrades.LeafRadius") or 0,
-	}
-end
-
 local function getStats(player: Player)
-	local levels = getLevels(player)
+	local levels = UpgradeService.GetLevels(player)
 	local tier = DataManager.Get(player, "Tree.TreeTier") or 1
+
+	local capacity = math.floor(math.clamp(
+		BoostMath.TotalBoostNumber(levels, tier, "LeafCapacity", LeafConfig.BaseCapacity),
+		LeafConfig.BaseCapacity,
+		LeafConfig.MaxCapacity
+	))
+
+	local interval = math.clamp(
+		BoostMath.GetSpawnInterval(levels, "LeafSpawnSpeed", LeafConfig.BaseSpawnInterval),
+		LeafConfig.MinSpawnInterval,
+		LeafConfig.BaseSpawnInterval
+	)
+
+	local radius = math.clamp(
+		BoostMath.TotalBoostNumber(levels, tier, "LeafCollectionArea", LeafConfig.BaseCollectionRadius),
+		LeafConfig.BaseCollectionRadius,
+		LeafConfig.MaxCollectionRadius
+	)
+
+	-- Clamped below 1 so nut chance can never fully replace leaf spawns.
+	local nutChance = math.clamp(
+		BoostMath.TotalBoostNumber(levels, tier, "NutChance", LeafConfig.BaseNutChance),
+		0,
+		0.95
+	)
+
 	return {
-		Capacity = LeafBoostCalculator.GetCapacity(levels),
-		SpawnInterval = LeafBoostCalculator.GetSpawnInterval(levels),
-		CollectionRadius = LeafBoostCalculator.GetCollectionRadius(levels),
-		ValueMultiplier = LeafBoostCalculator.GetValueMultiplier(levels, tier),
+		Capacity = capacity,
+		SpawnInterval = interval,
+		CollectionRadius = radius,
+		NutChance = nutChance,
 	}
 end
 
 GetLeafStats.OnServerInvoke = function(player: Player)
+	if not DataManager.GetProfile(player) then
+		return nil
+	end
 	return getStats(player)
 end
 
 -- ============================================================
--- Token bucket rate limiting (see header)
+-- Token bucket (see header)
 -- ============================================================
 
 local buckets: { [Player]: { tokens: number, lastRefill: number } } = {}
@@ -83,14 +93,12 @@ local buckets: { [Player]: { tokens: number, lastRefill: number } } = {}
 local function tryConsumeToken(player: Player, capacity: number, interval: number): boolean
 	local bucket = buckets[player]
 	if not bucket then
-		bucket = { tokens = capacity, lastRefill = os.clock() } -- start full: fresh join shouldn't feel throttled
+		bucket = { tokens = capacity, lastRefill = os.clock() } -- start full so a fresh join isn't throttled
 		buckets[player] = bucket
 	end
 
 	local now = os.clock()
-	local elapsed = now - bucket.lastRefill
-	local refillRate = capacity / math.max(interval, LeafConfig.MinSpawnInterval)
-	bucket.tokens = math.min(capacity, bucket.tokens + elapsed * refillRate)
+	bucket.tokens = math.min(capacity, bucket.tokens + (now - bucket.lastRefill) * (capacity / math.max(interval, LeafConfig.MinSpawnInterval)))
 	bucket.lastRefill = now
 
 	if bucket.tokens >= 1 then
@@ -100,24 +108,40 @@ local function tryConsumeToken(player: Player, capacity: number, interval: numbe
 	return false
 end
 
-CollectLeaf.OnServerEvent:Connect(function(player: Player)
+CollectLeaf.OnServerEvent:Connect(function(player: Player, isNut: any)
 	if not DataManager.GetProfile(player) then
 		return
 	end
 
-	local levels = getLevels(player)
-	local capacity = LeafBoostCalculator.GetCapacity(levels)
-	local interval = LeafBoostCalculator.GetSpawnInterval(levels)
+	local levels = UpgradeService.GetLevels(player)
+	local tier = DataManager.Get(player, "Tree.TreeTier") or 1
+
+	local capacity = math.floor(math.clamp(
+		BoostMath.TotalBoostNumber(levels, tier, "LeafCapacity", LeafConfig.BaseCapacity),
+		LeafConfig.BaseCapacity,
+		LeafConfig.MaxCapacity
+	))
+	local interval = math.clamp(
+		BoostMath.GetSpawnInterval(levels, "LeafSpawnSpeed", LeafConfig.BaseSpawnInterval),
+		LeafConfig.MinSpawnInterval,
+		LeafConfig.BaseSpawnInterval
+	)
 
 	if not tryConsumeToken(player, capacity, interval) then
-		return -- silently dropped: this player is collecting faster than their own upgrades allow
+		return -- collecting faster than their own upgrades allow
 	end
 
-	local tier = DataManager.Get(player, "Tree.TreeTier") or 1
-	local multiplier = LeafBoostCalculator.GetValueMultiplier(levels, tier)
-	local value = BigNumber.FromNumber(LeafConfig.BaseLeafValue * multiplier)
-
-	DataManager.AddCurrency(player, "Leafs", value)
+	-- The client says WHICH kind it collected, which is fine: both paths
+	-- are rate-limited identically and the VALUE of each is computed
+	-- here, so claiming "nut" only changes which currency is awarded,
+	-- never how much advantage is gained.
+	if isNut == true then
+		local nutValue = BoostMath.TotalBoost(levels, tier, "NutValue", BigNumber.FromNumber(1))
+		DataManager.AddCurrency(player, "Nuts", nutValue)
+	else
+		local leafValue = BoostMath.TotalBoost(levels, tier, "LeafValue", BigNumber.FromNumber(LeafConfig.BaseLeafValue))
+		DataManager.AddCurrency(player, "Leafs", leafValue)
+	end
 end)
 
 Players.PlayerRemoving:Connect(function(player)

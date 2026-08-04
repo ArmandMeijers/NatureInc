@@ -29,3 +29,4 @@ local CurrencyOrder: { string } = {
 }
 
 return CurrencyOrder
+
