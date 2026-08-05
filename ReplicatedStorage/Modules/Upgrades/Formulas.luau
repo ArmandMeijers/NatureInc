@@ -2,25 +2,18 @@
 --[[
 	Formulas.luau
 
-	The balance library. Every cost curve and every boost curve in the
-	game is a named function in here — schema entries just reference one
-	by name and pass params. Tuning the whole game means editing this
-	file (or the params in a schema entry), never gameplay code.
+	The balance library. Every cost curve, boost curve and reset payout
+	in the game is a named function here — schema entries reference one
+	by name and pass params. Tuning means editing this file or a schema's
+	params, never gameplay code.
 
-	Two families:
-	  Cost.*  (baseCost: BigNum, level: number, params) -> BigNum
-	          Cost to buy the NEXT level, i.e. going level -> level+1.
-	  Boost.* (level: number, params) -> number
-	          The raw value this upgrade contributes at that level.
-	          What that value MEANS depends on the entry's BoostType
-	          (see UpgradeSchema): a Flat entry's 5 is "+5", a Multiplier
-	          entry's 2.5 is "x2.5".
+	  Cost.*  (baseCost, level, params)     -> BigNum
+	  Boost.* (level, params, entry)        -> number
+	  Reset.* (inputAmount, params)         -> BigNum
 
-	Costs return BigNumber because they run away fast (exponential^level
-	passes 1e308 well before level 1000). Boost values return plain
-	numbers and get converted to BigNumber at combine time in BoostMath —
-	individual boost contributions stay in a sane range even when the
-	COMBINED product is astronomically large.
+	`entry` is the full schema entry, passed so a curve can shape itself
+	around MaxLevel. IntervalDecay is why it exists; everything else
+	ignores it.
 
 	Location: ReplicatedStorage/Modules/Upgrades/Formulas.luau
 ]]
@@ -32,27 +25,24 @@ type BigNum = BigNumber.BigNum
 
 local Formulas = {}
 
+local ZERO = BigNumber.new(0, 0)
+
 -- ============================================================
 -- COST FORMULAS
--- All take (baseCost, level, params) and return the cost of the NEXT
--- level. `level` is the CURRENT owned level, so level 0 -> baseCost.
+-- (baseCost, level, params) -> cost of the NEXT level.
+-- `level` is the CURRENT owned level, so level 0 -> baseCost.
 -- ============================================================
 
 Formulas.Cost = {}
 
--- Cost = Base + (Level × Increase).  Early game only — falls behind fast.
 function Formulas.Cost.Linear(baseCost: BigNum, level: number, params: { Increase: number }): BigNum
 	return BigNumber.Add(baseCost, BigNumber.FromNumber(level * params.Increase))
 end
 
--- Cost = Base × Growth^Level.  The workhorse — use this unless you have
--- a reason not to. Growth 1.15 = +15% per level.
 function Formulas.Cost.Exponential(baseCost: BigNum, level: number, params: { Growth: number }): BigNum
 	return BigNumber.Mul(baseCost, BigNumber.Pow(BigNumber.FromNumber(params.Growth), level))
 end
 
--- Cost = Base × Level^Power.  Slower than exponential; good for upgrades
--- you want players to max eventually.
 function Formulas.Cost.Polynomial(baseCost: BigNum, level: number, params: { Power: number }): BigNum
 	if level <= 0 then
 		return baseCost
@@ -60,17 +50,12 @@ function Formulas.Cost.Polynomial(baseCost: BigNum, level: number, params: { Pow
 	return BigNumber.Mul(baseCost, BigNumber.Pow(BigNumber.FromNumber(level + 1), params.Power))
 end
 
--- Cost = Base × Growth^Level × Level^Power.  Exponential that accelerates
--- even harder late — for long-term progression sinks.
 function Formulas.Cost.Hybrid(baseCost: BigNum, level: number, params: { Growth: number, Power: number }): BigNum
 	local exponentialPart = BigNumber.Pow(BigNumber.FromNumber(params.Growth), level)
 	local polynomialPart = BigNumber.Pow(BigNumber.FromNumber(level + 1), params.Power)
 	return BigNumber.Mul(baseCost, BigNumber.Mul(exponentialPart, polynomialPart))
 end
 
--- Different formula past each breakpoint, for endgame balancing.
--- params.Tiers = { { UpTo = 25, Formula = "Exponential", Params = {...} }, ... }
--- Last tier's UpTo can be math.huge to catch everything above.
 function Formulas.Cost.Piecewise(baseCost: BigNum, level: number, params: { Tiers: { any } }): BigNum
 	for _, tier in params.Tiers do
 		if level < tier.UpTo then
@@ -87,41 +72,29 @@ end
 
 -- ============================================================
 -- BOOST FORMULAS
--- All take (level, params) and return this upgrade's contribution AT
--- that level. Level 0 must always return the identity value for its
--- BoostType (0 for Flat/Power, 1 for Multiplier) so an unpurchased
--- upgrade contributes nothing.
+-- (level, params, entry) -> this upgrade's contribution at that level.
+-- Level 0 must return the identity for its BoostType (0 for Flat/Power,
+-- 1 for Multiplier) so an unpurchased upgrade contributes nothing.
 -- ============================================================
 
 Formulas.Boost = {}
 
--- Value = Level × PerLevel.  Identity at level 0 = 0. Use with Flat.
 function Formulas.Boost.Linear(level: number, params: { PerLevel: number }): number
 	return level * params.PerLevel
 end
 
--- Value = 1 + (Level × PerLevel).  Identity at level 0 = 1. Use with
--- Multiplier. PerLevel 0.25 = +25% per level, added linearly (level 4 =
--- 2x, not 1.25^4) — predictable, easy to reason about while balancing.
 function Formulas.Boost.Percentage(level: number, params: { PerLevel: number }): number
 	return 1 + (level * params.PerLevel)
 end
 
--- Value = Growth^Level.  Identity at level 0 = 1. Use with Multiplier
--- when you want compounding — this is what makes big numbers happen.
--- Growth 1.15 at level 50 ≈ 1083x.
 function Formulas.Boost.ExponentialGrowth(level: number, params: { Growth: number }): number
 	return params.Growth ^ level
 end
 
--- Value = 1 + Scale × log(1 + Level).  Identity at level 0 = 1. Soft
--- scaling — strong early, flattens hard. Use with Multiplier.
 function Formulas.Boost.Logarithmic(level: number, params: { Scale: number }): number
 	return 1 + params.Scale * math.log(1 + level)
 end
 
--- Linear until Softcap, then square-root growth past it. Stops a stat
--- running away without ever hard-stopping progression.
 function Formulas.Boost.Softcap(level: number, params: { PerLevel: number, Softcap: number }): number
 	local raw = level * params.PerLevel
 	if raw <= params.Softcap then
@@ -130,9 +103,6 @@ function Formulas.Boost.Softcap(level: number, params: { PerLevel: number, Softc
 	return params.Softcap + (raw - params.Softcap) ^ 0.5
 end
 
--- Value = Max × (Level / (Level + K)).  Approaches Max, never reaches
--- it. Built for bounded stats like NutChance (a percentage that must
--- never hit 100%). Identity at level 0 = 0. Use with Flat.
 function Formulas.Boost.DiminishingReturns(level: number, params: { Max: number, K: number }): number
 	if level <= 0 then
 		return 0
@@ -140,14 +110,113 @@ function Formulas.Boost.DiminishingReturns(level: number, params: { Max: number,
 	return params.Max * (level / (level + params.K))
 end
 
--- Decays a starting value toward Floor, shrinking by Rate each level:
--- 3 -> 2.55 -> 2.17 -> ... -> Floor. Built for spawn INTERVAL, where
--- "better" means smaller. Returns the resulting interval directly, not
--- a delta — see UpgradeSchema's SpeedInterval BoostType.
 function Formulas.Boost.ExponentialDecay(level: number, params: { Start: number, Rate: number, Floor: number }): number
-	local value = params.Start * (params.Rate ^ level)
-	return math.max(value, params.Floor)
+	return math.max(params.Start * (params.Rate ^ level), params.Floor)
+end
+
+-- A cooldown curve that SHAPES ITSELF AROUND MaxLevel. Two geometric
+-- phases derived at call time: Start -> KneeValue over the first
+-- KneeFraction of levels, KneeValue -> Floor over the rest. Retuning how
+-- long the upgrade runs is therefore a one-number change, instead of
+-- solving for the rate that happens to land on the floor.
+function Formulas.Boost.IntervalDecay(
+	level: number,
+	params: { Start: number, Floor: number, KneeValue: number?, KneeFraction: number? },
+	entry: any
+): number
+	local maxLevel = (entry and entry.MaxLevel) or 30
+	if maxLevel <= 0 then
+		return params.Start
+	end
+
+	local kneeValue = params.KneeValue or 0.1
+	local kneeFraction = params.KneeFraction or (2 / 3)
+	local knee = math.max(1, math.round(maxLevel * kneeFraction))
+	knee = math.min(knee, maxLevel - 1)
+
+	if level <= 0 then
+		return params.Start
+	end
+	if level >= maxLevel then
+		return params.Floor
+	end
+
+	if level <= knee then
+		local rate = (kneeValue / params.Start) ^ (1 / knee)
+		return math.max(params.Start * (rate ^ level), params.Floor)
+	end
+
+	local tailLevels = maxLevel - knee
+	local rate = (params.Floor / kneeValue) ^ (1 / tailLevels)
+	return math.max(kneeValue * (rate ^ (level - knee)), params.Floor)
+end
+
+-- ============================================================
+-- RESET FORMULAS
+-- (inputAmount: BigNum, params) -> payout: BigNum
+--
+-- All of these work in LOG SPACE. Reset inputs are the whole run's
+-- earnings, which is exactly the case BigNumber exists for — converting
+-- to a plain number to raise it to a power saturates to infinity long
+-- before a real player gets there, and hands back a NaN payout.
+-- ============================================================
+
+Formulas.Reset = {}
+
+-- The standard prestige curve.
+--
+--     payout = (input / Threshold) ^ Exponent
+--
+-- Threshold is the point where the reset first pays out exactly 1, and
+-- Exponent is how fast it creeps past that. Exponent 1 would be a flat
+-- exchange rate: 10k -> 1, 20k -> 2, and resetting twice as late would
+-- be worth exactly twice as much, which gives a player no reason to
+-- push. Above 1 makes waiting longer worth MORE than proportionally
+-- more, which is the entire tension of a prestige layer.
+--
+-- At Threshold 10,000 / Exponent 1.3:
+--     10k  -> 1
+--     15k  -> 1.69
+--     25k  -> 3.4
+--     100k -> 19.9
+--     1M   -> 398
+-- Gentle enough early that the first reset isn't a cliff, steep enough
+-- later that sitting on a big bank feels rewarded.
+function Formulas.Reset.PowerThreshold(
+	inputAmount: BigNum,
+	params: { Threshold: number, Exponent: number }
+): BigNum
+	if BigNumber.IsZero(inputAmount) or inputAmount.mantissa < 0 then
+		return ZERO
+	end
+
+	local logInput = BigNumber.Log10(inputAmount)
+	local logThreshold = math.log10(params.Threshold)
+	local logPayout = params.Exponent * (logInput - logThreshold)
+
+	if logPayout < 0 then
+		return ZERO -- below the threshold: not worth anything yet
+	end
+
+	local exponent = math.floor(logPayout)
+	local mantissa = 10 ^ (logPayout - exponent)
+	return BigNumber.new(mantissa, exponent)
+end
+
+-- Softer alternative: linear past the threshold with no acceleration.
+-- Here for balancing experiments — swap a scheme entry's Formula name.
+function Formulas.Reset.LinearThreshold(
+	inputAmount: BigNum,
+	params: { Threshold: number }
+): BigNum
+	if BigNumber.IsZero(inputAmount) or inputAmount.mantissa < 0 then
+		return ZERO
+	end
+	local payout = BigNumber.Div(inputAmount, BigNumber.FromNumber(params.Threshold))
+	if BigNumber.LessThan(payout, BigNumber.FromNumber(1)) then
+		return ZERO
+	end
+	return payout
 end
 
 return Formulas
-

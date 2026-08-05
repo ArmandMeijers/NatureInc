@@ -27,7 +27,7 @@ Template.Currency = {
 Template.Statistics = {
 
 	TotalValues = {
-		TotalLeavesCollected = zero(),
+		TotalLeafsCollected = zero(),
 		TotalCompostCollected = zero(),
 		TotalNutsCollected = zero(),
 		TotalRunesOpened = zero(),
@@ -53,6 +53,10 @@ Template.Unlocks = {
 		Compost = false,
 		Nuts = false,
 	},
+	
+	ResetBoards = {
+		CompostBoard = true,
+	},
 
 	-- Runes
 	Runes = {
@@ -73,6 +77,7 @@ Template.Upgrades = {
 		LeafMult = 0,
 		LeafSpawnRate = 0,
 		LeafCapacity = 0,
+		LeafRadius = 0,
 	},
 
 
@@ -82,6 +87,7 @@ Template.Upgrades = {
 		CompostLeafMult = 0,
 		CompostCollectionArea = 0,
 		CompostLeafCapacity = 0,
+		CompostWalkspeed = 0,
 	},
 
 	-- Nuts upgrades
@@ -136,3 +142,4 @@ Template.Quests = {
 }
 
 return Template
+
