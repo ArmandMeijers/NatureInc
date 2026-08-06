@@ -206,4 +206,3 @@ function BoostMath.GetTreeTierEntries(config, currentTier: number, currencyKey: 
 end
 
 return BoostMath
-

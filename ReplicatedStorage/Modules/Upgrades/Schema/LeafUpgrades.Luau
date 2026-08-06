@@ -45,7 +45,7 @@ return {
 		Category = "LeafUpgrades",
 		Tag = "LeafValue",
 		BoostType = "Flat",
-		MaxLevel = 99, -- reads 100 on the board
+		MaxLevel = 199, -- reads 100 on the board
 		Currency = "Leafs",
 		BaseCost = BigNumber.FromNumber(5),
 		CostFormula = "Exponential",
@@ -61,15 +61,15 @@ return {
 		Category = "LeafUpgrades",
 		Tag = "LeafValue",
 		BoostType = "Multiplier",
-		MaxLevel = 49, -- reads 50
+		MaxLevel = 99, -- reads 50
 		Currency = "Leafs",
 		BaseCost = BigNumber.FromNumber(10),
 		CostFormula = "Hybrid",
-		CostParams = { Growth = 1.22, Power = 1.1 },
+		CostParams = { Growth = 1.18, Power = 1.09 },
 		-- Compounding on purpose: this is the upgrade meant to carry
 		-- leaf income into BigNumber territory long-term.
 		BoostFormula = "ExponentialGrowth",
-		BoostParams = { Growth = 1.18 },
+		BoostParams = { Growth = 1.22 },
 		Display = { Mode = "Multiplier" },
 	},
 
@@ -108,7 +108,7 @@ return {
 		Category = "LeafUpgrades",
 		Tag = "LeafCapacity",
 		BoostType = "Flat",
-		MaxLevel = 494, -- base 5 + 494 = 499, just under LeafConfig's 500 ceiling
+		MaxLevel = 294, -- base 5 + 494 = 499, just under LeafConfig's 500 ceiling
 		Currency = "Leafs",
 		BaseCost = BigNumber.FromNumber(25),
 		CostFormula = "Exponential",
@@ -130,7 +130,7 @@ return {
 		Currency = "Leafs",
 		BaseCost = BigNumber.FromNumber(200),
 		CostFormula = "Exponential",
-		CostParams = { Growth = 1.4 },
+		CostParams = { Growth = 1.6 },
 		BoostFormula = "Linear",
 		BoostParams = { PerLevel = 0.5 },
 		Display = { Mode = "Studs", Base = LeafConfig.BaseCollectionRadius, Decimals = 1 },

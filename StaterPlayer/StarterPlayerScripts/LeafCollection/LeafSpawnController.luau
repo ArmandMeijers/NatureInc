@@ -47,6 +47,13 @@ local leafTemplate = ReplicatedStorage
 	:WaitForChild("Collectibles")
 	:WaitForChild("LeafModel")
 
+-- Falls back to the leaf model if the nut art isn't in yet, so a
+-- missing asset costs you the visual and nothing else — the roll,
+-- the IsNut attribute and the payout all still work.
+local nutTemplate = ReplicatedStorage.Assets.Collectibles:FindFirstChild("NutModel")
+	or ReplicatedStorage.Assets.Collectibles:FindFirstChild("Nut")
+	or leafTemplate
+
 local remotesFolder = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Leaf")
 local CollectLeaf = remotesFolder:WaitForChild("CollectLeaf")
 
@@ -158,7 +165,11 @@ local function getLocalBottomOffset(instance: Model | BasePart): number
 end
 
 local function spawnLeaf()
-	local clone = leafTemplate:Clone()
+	-- Rolled BEFORE the clone now, because it decides WHICH model to
+	-- clone. Still one roll per placement, so a bulk batch of 10
+	-- rolls ten times and the loop needs no changes.
+	local isNut = math.random() < LeafStatsState.NutChance
+	local clone = (isNut and nutTemplate or leafTemplate):Clone()
 	local randomYaw = math.rad(math.random() * 360) -- random facing direction
 	local rotation = CFrame.Angles(0, randomYaw, 0) * FLAT_CORRECTION
 
@@ -175,7 +186,6 @@ local function spawnLeaf()
 	-- instance itself. Nut art isn't in yet — until it is, a nut is just
 	-- a leaf that pays out as a nut, and swapping in a different model
 	-- here later changes nothing else in this file.
-	local isNut = math.random() < LeafStatsState.NutChance
 	clone:SetAttribute("IsNut", isNut)
 
 	clone.Parent = leavesFolder

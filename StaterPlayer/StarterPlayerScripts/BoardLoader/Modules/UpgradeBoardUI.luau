@@ -11,30 +11,31 @@
 	    UpgradeCategory   "LeafUpgrades"   (required)
 	    BoardTitle        "Leaf Upgrades"  (optional, derived if absent)
 	    BoardCurrency     "Leafs"          (optional, taken from the
-	                                        category's first upgrade if
-	                                        absent — only used to tint the
-	                                        title)
-	Compost and Nut boards need no new code: copy the part, change one
-	attribute.
+	                                        category's first upgrade;
+	                                        only tints the title)
+	The part should be Transparency = 1 — a SurfaceGui renders regardless
+	of its adornee, and an opaque brick behind a translucent panel just
+	makes the panel look solid.
 
-	THE PART SHOULD BE INVISIBLE. A SurfaceGui renders regardless of its
-	adornee's transparency, so an opaque brick behind a translucent panel
-	just makes the panel look solid.
+	ONE TEXT SIZING MECHANISM FOR EVERY LABEL. Each one hugs its own text
+	at the size the theme names, and a row shrinks its labels in a single
+	pass only if they wouldn't fit its width.
 
-	CARDS ARE LEFT ALIGNED, and that isn't only a layout preference.
-	Inside a ScrollingFrame with AutomaticCanvasSize, HorizontalAlignment
-	.Center splits any overflow evenly across both sides — and the half
-	that lands left of canvas origin sits in negative space that scrolling
-	can't reach. Centring therefore looks fine until the cards outgrow the
-	board and then permanently eats the first one.
+	The alternative — TextScaled — means "fill your box", which sounds
+	equivalent and isn't: the box wins. Short fixed-height rows produced
+	small text no matter what the theme said, and mixing the two
+	mechanisms is why one row rendered large and the rest didn't. It also
+	gets centring for free, since the engine positions hug-sized labels
+	in a centred layout correctly whatever their lengths.
 
-	SIZING. Card width = strip height x Theme.Card.AspectRatio,
-	recalculated whenever the SurfaceGui resizes. Board height is the
-	constant here, so widening the part fits MORE cards rather than
-	stretching the existing ones.
+	The fitting pass runs from the painter, never from a resize signal:
+	TextSize drives TextBounds drives the calculation drives TextSize,
+	which is fine one-shot and oscillates if it's event-driven.
 
-	CARD ORDER: schema Order, then maxed pushed to the back. With
-	Settings.General.HideMaxUpgrades on they're dropped instead.
+	CARDS ARE LEFT ALIGNED, and not only as a preference: inside a
+	ScrollingFrame with AutomaticCanvasSize, HorizontalAlignment.Center
+	splits overflow across both sides, and the half left of canvas origin
+	is unreachable by scrolling.
 
 	Rebuilds only when the SET of visible upgrades changes; buying
 	repaints in place, so the card under the cursor survives the click.
@@ -63,6 +64,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local ZERO = BigNumber.new(0, 0)
 local ARROW = "→"
+local MIN_TEXT_SIZE = 8
 
 local UpgradeBoardUI = {}
 
@@ -97,23 +99,69 @@ local function textStroke(label: Instance, color: Color3, thickness: number): UI
 	return uiStroke
 end
 
--- Renders at maxSize when it fits and shrinks only when it can't, which
--- is what lets one card hold both "x1" and "5 studs -> 5.5 studs".
-local function scaledLabel(size: UDim2, maxSize: number, color: Color3, font: Enum.Font): TextLabel
+-- Every card label is built this way: a real TextSize, a box that hugs
+-- the text. Never TextScaled — see the module header.
+local function hugLabel(textSize: number, color: Color3, font: Enum.Font): TextLabel
 	local label = Instance.new("TextLabel")
-	label.Size                   = size
+	label.AutomaticSize          = Enum.AutomaticSize.X
+	label.Size                   = UDim2.new(0, 0, 1, 0)
 	label.BackgroundTransparency = 1
 	label.Font                   = font
+	label.TextSize               = textSize
 	label.TextColor3             = color
-	label.TextScaled             = true
+	label.TextWrapped            = false
 	label.Text                   = ""
-
-	local constraint = Instance.new("UITextSizeConstraint")
-	constraint.MaxTextSize = maxSize
-	constraint.MinTextSize = 8
-	constraint.Parent = label
-
 	return label
+end
+
+-- A row of hug-sized labels, centred, with a gap between them.
+local function makeRow(parent: Instance, layoutOrder: number, height: number, gap: number): Frame
+	local row = Instance.new("Frame")
+	row.LayoutOrder            = layoutOrder
+	row.Size                   = UDim2.new(1, 0, 0, height)
+	row.BackgroundTransparency = 1
+	row.ZIndex                 = 3
+	row.Parent                 = parent
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection       = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment   = Enum.VerticalAlignment.Center
+	layout.SortOrder           = Enum.SortOrder.LayoutOrder
+	layout.Padding             = UDim.new(0, gap)
+	layout.Parent              = row
+
+	return row
+end
+
+-- Shrinks a group of labels until they fit their row. Only shrinks:
+-- a row with room to spare keeps the theme's size rather than growing
+-- into the gap, so sizes stay consistent across cards.
+local function fitLabels(rowWidth: number, labels: { TextLabel }, gap: number, baseSize: number)
+	local visible = {}
+	for _, label in labels do
+		if label.Visible then
+			table.insert(visible, label)
+		end
+	end
+	for _, label in visible do
+		label.TextSize = baseSize
+	end
+	if rowWidth <= 0 or #visible == 0 then
+		return
+	end
+
+	local total = gap * math.max(#visible - 1, 0)
+	for _, label in visible do
+		total += label.TextBounds.X
+	end
+
+	if total > rowWidth and total > 0 then
+		local scaled = math.max(MIN_TEXT_SIZE, math.floor(baseSize * rowWidth / total))
+		for _, label in visible do
+			label.TextSize = scaled
+		end
+	end
 end
 
 -- ReplicatedStorage.UpgradeIcons.<Category>.<UpgradeId>. Accepts a Decal,
@@ -149,9 +197,6 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 		titleText = (category:gsub("(%l)(%u)", "%1 %2"))
 	end
 
-	-- Only used to tint the title. Derived from the category's first
-	-- upgrade so a new board picks up its own colours without needing the
-	-- attribute set.
 	local boardCurrency = boardPart:GetAttribute("BoardCurrency")
 	if type(boardCurrency) ~= "string" then
 		local firstId = UpgradeSchema.GetCategoryOrder(category)[1]
@@ -209,12 +254,11 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 	titleLabel.Font                   = Theme.Title.Font
 	titleLabel.TextSize               = Theme.Title.TextSize
 	titleLabel.TextColor3             = Theme.Title.Color
+	titleLabel.TextWrapped            = false
 	titleLabel.Text                   = string.upper(titleText)
 	titleLabel.Parent                 = titleHolder
 	textStroke(titleLabel, Theme.Title.StrokeColor, Theme.Title.StrokeThickness)
 
-	-- Title wears the board currency's gradient, live — re-tinting
-	-- LeafsGRAD updates it without a rejoin.
 	if boardCurrency then
 		CurrencyArt.Bind(boardCurrency, { Labels = { titleLabel } })
 	end
@@ -250,11 +294,7 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 	stripFlex.Parent = strip
 
 	local stripLayout = Instance.new("UIListLayout")
-	stripLayout.FillDirection = Enum.FillDirection.Horizontal
-	-- LEFT, not Center. Centring splits any overflow across both sides of
-	-- the canvas, and the half left of origin is unreachable by scrolling
-	-- — which is exactly why the first card was clipped while the right
-	-- end scrolled fine.
+	stripLayout.FillDirection       = Enum.FillDirection.Horizontal
 	stripLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 	stripLayout.VerticalAlignment   = Enum.VerticalAlignment.Top
 	stripLayout.SortOrder           = Enum.SortOrder.LayoutOrder
@@ -287,15 +327,6 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 		)
 	end
 
-	local function resizeCards()
-		local width = cardWidth()
-		for _, record in cards do
-			record.Holder.Size = UDim2.new(0, width, 1, -Theme.Card.ShadowOffset)
-		end
-	end
-
-	strip:GetPropertyChangedSignal("AbsoluteSize"):Connect(resizeCards)
-
 	local function buildButton(parent: Instance, label: string, order: number): (TextButton, (string) -> ())
 		local button = Instance.new("TextButton")
 		button.Name             = label
@@ -305,23 +336,12 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 		button.BorderSizePixel  = 0
 		button.AutoButtonColor  = false
 		button.Font             = Theme.Button.Font
-		button.TextScaled       = true
+		button.TextSize         = Theme.Button.TextSize
+		button.TextWrapped      = false
 		button.Text             = label
 		button.ZIndex           = 4
 		button.Parent           = parent
 		corner(button, Theme.Button.Corner)
-
-		local textConstraint = Instance.new("UITextSizeConstraint")
-		textConstraint.MaxTextSize = Theme.Button.MaxTextSize
-		textConstraint.MinTextSize = 8
-		textConstraint.Parent = button
-
-		local buttonPadding = Instance.new("UIPadding")
-		buttonPadding.PaddingTop    = UDim.new(0, 5)
-		buttonPadding.PaddingBottom = UDim.new(0, 5)
-		buttonPadding.PaddingLeft   = UDim.new(0, 4)
-		buttonPadding.PaddingRight  = UDim.new(0, 4)
-		buttonPadding.Parent        = button
 
 		local gradient = Instance.new("UIGradient")
 		gradient.Rotation = 90
@@ -387,30 +407,26 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 		cardLayout.Parent              = card
 
 		-- 1. Name
-		local nameLabel = scaledLabel(
-			UDim2.new(1, 0, 0, Theme.Name.Height),
-			Theme.Name.TextSize, Theme.Name.Color, Theme.Name.Font
-		)
+		local nameRow = makeRow(card, 1, Theme.Name.Height, 0)
+		nameRow.Name = "NameRow"
+		local nameLabel = hugLabel(Theme.Name.TextSize, Theme.Name.Color, Theme.Name.Font)
 		nameLabel.Name = "Name"
-		nameLabel.LayoutOrder = 1
 		nameLabel.Text = entry.Name
 		nameLabel.ZIndex = 3
-		nameLabel.Parent = card
+		nameLabel.Parent = nameRow
 		textStroke(nameLabel, Theme.Name.StrokeColor, Theme.Name.StrokeThickness)
 
 		-- 2. Level
-		local levelLabel = scaledLabel(
-			UDim2.new(1, 0, 0, Theme.Level.Height),
-			Theme.Level.TextSize, Theme.Level.Color, Theme.Level.Font
-		)
+		local levelRow = makeRow(card, 2, Theme.Level.Height, 0)
+		levelRow.Name = "LevelRow"
+		local levelLabel = hugLabel(Theme.Level.TextSize, Theme.Level.Color, Theme.Level.Font)
 		levelLabel.Name = "Level"
-		levelLabel.LayoutOrder = 2
 		levelLabel.ZIndex = 3
-		levelLabel.Parent = card
+		levelLabel.Parent = levelRow
 		textStroke(levelLabel, Theme.Level.StrokeColor, Theme.Level.StrokeThickness)
 
-		-- 3. Icon. Flex-fills the card's leftover height and stays square,
-		-- so a taller card gets a bigger icon rather than more whitespace.
+		-- 3. Icon: flex-fills the leftover height and stays square, so a
+		-- taller card gets a bigger icon rather than more whitespace.
 		local iconHolder = Instance.new("Frame")
 		iconHolder.Name                   = "IconHolder"
 		iconHolder.LayoutOrder            = 3
@@ -465,6 +481,7 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 			glyph.BackgroundTransparency = 1
 			glyph.Font                   = Enum.Font.GothamBold
 			glyph.TextScaled             = true
+			glyph.TextWrapped            = false
 			glyph.TextColor3             = Theme.Icon.PlaceholderTextColor
 			glyph.Text                   = Theme.Icon.PlaceholderGlyph
 			glyph.ZIndex                 = 4
@@ -472,38 +489,18 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 			textStroke(glyph, Theme.Name.StrokeColor, 2)
 		end
 
-		-- 4. Value transition. Fixed proportions rather than auto-sized
-		-- labels, so the row can never grow past the card.
-		local valueRow = Instance.new("Frame")
-		valueRow.Name                   = "Value"
-		valueRow.LayoutOrder            = 4
-		valueRow.Size                   = UDim2.new(1, 0, 0, Theme.Value.Height)
-		valueRow.BackgroundTransparency = 1
-		valueRow.ZIndex                 = 3
-		valueRow.Parent                 = card
+		-- 4. Boost transition
+		local valueRow = makeRow(card, 4, Theme.Value.Height, Theme.Value.Gap)
+		valueRow.Name = "Value"
 
-		local valueLayout = Instance.new("UIListLayout")
-		valueLayout.FillDirection       = Enum.FillDirection.Horizontal
-		valueLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		valueLayout.VerticalAlignment   = Enum.VerticalAlignment.Center
-		valueLayout.SortOrder           = Enum.SortOrder.LayoutOrder
-		valueLayout.Parent              = valueRow
-
-		local currentValue = scaledLabel(
-			UDim2.new(Theme.Value.SideScale, 0, 1, 0),
-			Theme.Value.MaxTextSize, Theme.Value.Color, Theme.Value.Font
-		)
+		local currentValue = hugLabel(Theme.Value.TextSize, Theme.Value.Color, Theme.Value.Font)
 		currentValue.Name = "Current"
 		currentValue.LayoutOrder = 1
-		currentValue.TextXAlignment = Enum.TextXAlignment.Right
 		currentValue.ZIndex = 3
 		currentValue.Parent = valueRow
 		textStroke(currentValue, Theme.Value.StrokeColor, Theme.Value.StrokeThickness)
 
-		local arrow = scaledLabel(
-			UDim2.new(Theme.Value.ArrowScale, 0, 1, 0),
-			Theme.Value.MaxTextSize, Theme.Value.ArrowColor, Enum.Font.GothamBold
-		)
+		local arrow = hugLabel(Theme.Value.TextSize, Theme.Value.ArrowColor, Enum.Font.GothamBold)
 		arrow.Name = "Arrow"
 		arrow.LayoutOrder = 2
 		arrow.Text = ARROW
@@ -512,64 +509,29 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 		arrow.Parent = valueRow
 		textStroke(arrow, Theme.Value.StrokeColor, Theme.Value.StrokeThickness)
 
-		local nextValue = scaledLabel(
-			UDim2.new(Theme.Value.SideScale, 0, 1, 0),
-			Theme.Value.MaxTextSize, Theme.Value.Color, Theme.Value.Font
-		)
+		local nextValue = hugLabel(Theme.Value.TextSize, Theme.Value.Color, Theme.Value.Font)
 		nextValue.Name = "Next"
 		nextValue.LayoutOrder = 3
-		nextValue.TextXAlignment = Enum.TextXAlignment.Left
 		nextValue.ZIndex = 3
 		nextValue.Parent = valueRow
 		textStroke(nextValue, Theme.Value.StrokeColor, Theme.Value.StrokeThickness)
 
-		-- 5. Cost: white amount, currency name in its own gradient
-		local costRow = Instance.new("Frame")
-		costRow.Name                   = "Cost"
-		costRow.LayoutOrder            = 5
-		costRow.Size                   = UDim2.new(1, 0, 0, Theme.Cost.Height)
-		costRow.BackgroundTransparency = 1
-		costRow.ZIndex                 = 3
-		costRow.Parent                 = card
+		-- 5. Cost
+		local costRow = makeRow(card, 5, Theme.Cost.Height, Theme.Cost.Gap)
+		costRow.Name = "Cost"
 
-		local costLayout = Instance.new("UIListLayout")
-		costLayout.FillDirection       = Enum.FillDirection.Horizontal
-		costLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		costLayout.VerticalAlignment   = Enum.VerticalAlignment.Center
-		costLayout.SortOrder           = Enum.SortOrder.LayoutOrder
-		costLayout.Padding             = UDim.new(0, 0)
-		costLayout.Parent              = costRow
-
-		local costAmount = scaledLabel(
-			UDim2.new(Theme.Cost.AmountScale, 0, 1, 0),
-			Theme.Cost.MaxTextSize, Theme.Cost.AmountColor, Theme.Cost.Font
-		)
+		local costAmount = hugLabel(Theme.Cost.TextSize, Theme.Cost.AmountColor, Theme.Cost.Font)
 		costAmount.Name = "Amount"
 		costAmount.LayoutOrder = 1
-		costAmount.TextXAlignment = Enum.TextXAlignment.Right
 		costAmount.ZIndex = 3
 		costAmount.Parent = costRow
-
-		-- Gap lives INSIDE each half, so the two boxes stay exactly
-		-- 50/50 and their meeting point sits on the card's centre line.
-		local costAmountPadding = Instance.new("UIPadding")
-		costAmountPadding.PaddingRight = UDim.new(0, Theme.Cost.Gap)
-		costAmountPadding.Parent = costAmount
 		textStroke(costAmount, Theme.Cost.StrokeColor, Theme.Cost.StrokeThickness)
 
-		local costCurrency = scaledLabel(
-			UDim2.new(Theme.Cost.CurrencyScale, 0, 1, 0),
-			Theme.Cost.MaxTextSize, Theme.Cost.CurrencyColor, Theme.Cost.Font
-		)
+		local costCurrency = hugLabel(Theme.Cost.TextSize, Theme.Cost.CurrencyColor, Theme.Cost.Font)
 		costCurrency.Name = "Currency"
 		costCurrency.LayoutOrder = 2
-		costCurrency.TextXAlignment = Enum.TextXAlignment.Left
 		costCurrency.ZIndex = 3
 		costCurrency.Parent = costRow
-
-		local costCurrencyPadding = Instance.new("UIPadding")
-		costCurrencyPadding.PaddingLeft = UDim.new(0, Theme.Cost.Gap)
-		costCurrencyPadding.Parent = costCurrency
 		textStroke(costCurrency, Theme.Cost.StrokeColor, Theme.Cost.StrokeThickness)
 		CurrencyArt.Bind(entry.Currency, { Labels = { costCurrency } })
 
@@ -597,10 +559,15 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 			Entry        = entry,
 			Holder       = holder,
 			Card         = card,
+			NameRow      = nameRow,
+			NameLabel    = nameLabel,
+			LevelRow     = levelRow,
 			LevelLabel   = levelLabel,
+			ValueRow     = valueRow,
 			CurrentValue = currentValue,
 			Arrow        = arrow,
 			NextValue    = nextValue,
+			CostRow      = costRow,
 			CostAmount   = costAmount,
 			CostCurrency = costCurrency,
 			BuyButton    = buyButton,
@@ -632,6 +599,37 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 		return record
 	end
 
+	--== Fitting ==-----------------------------------------------------
+
+	function UpgradeBoardUI._fitCard(record)
+		fitLabels(record.NameRow.AbsoluteSize.X, { record.NameLabel }, 0, Theme.Name.TextSize)
+		fitLabels(record.LevelRow.AbsoluteSize.X, { record.LevelLabel }, 0, Theme.Level.TextSize)
+		fitLabels(
+			record.ValueRow.AbsoluteSize.X,
+			{ record.CurrentValue, record.Arrow, record.NextValue },
+			Theme.Value.Gap,
+			Theme.Value.TextSize
+		)
+		fitLabels(
+			record.CostRow.AbsoluteSize.X,
+			{ record.CostAmount, record.CostCurrency },
+			Theme.Cost.Gap,
+			Theme.Cost.TextSize
+		)
+	end
+
+	local function resizeCards()
+		local width = cardWidth()
+		for _, record in cards do
+			record.Holder.Size = UDim2.new(0, width, 1, -Theme.Card.ShadowOffset)
+			-- Text size depends on row width, so it has to be refitted
+			-- whenever the card changes size.
+			UpgradeBoardUI._fitCard(record)
+		end
+	end
+
+	strip:GetPropertyChangedSignal("AbsoluteSize"):Connect(resizeCards)
+
 	--== Painting ==----------------------------------------------------
 
 	function UpgradeBoardUI._paintCard(record)
@@ -648,34 +646,27 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 		record.Arrow.Visible = nextText ~= nil
 		record.NextValue.Visible = nextText ~= nil
 		record.NextValue.Text = nextText or ""
-		-- Maxed shows one value, so it gets the whole row and centres.
-		record.CurrentValue.TextXAlignment = nextText and Enum.TextXAlignment.Right or Enum.TextXAlignment.Center
-		record.CurrentValue.Size = nextText
-			and UDim2.new(Theme.Value.SideScale, 0, 1, 0)
-			or UDim2.fromScale(1, 1)
 
 		if maxed then
 			record.CostAmount.Text = Theme.Cost.MaxedText
 			record.CostAmount.TextTransparency = Theme.Cost.MaxedTransparency
-			record.CostAmount.TextXAlignment = Enum.TextXAlignment.Center
-			record.CostAmount.Size = UDim2.fromScale(1, 1)
 			record.CostCurrency.Visible = false
 			record.Card.BackgroundTransparency = Theme.Card.MaxedTransparency
 			record.PaintBuy("Maxed")
 			record.PaintMax("Maxed")
 			record.MaxButton.Text = Theme.Button.MaxLabel
+			UpgradeBoardUI._fitCard(record)
 			return
 		end
 
 		record.Card.BackgroundTransparency = Theme.Card.Transparency
 		record.CostAmount.TextTransparency = 0
-		record.CostAmount.TextXAlignment = Enum.TextXAlignment.Right
-		record.CostAmount.Size = UDim2.new(Theme.Cost.AmountScale, 0, 1, 0)
 		record.CostCurrency.Visible = true
 
 		local amountText, currencyName = UpgradeDisplay.CostParts(upgradeId, level, notation)
 		record.CostAmount.Text = amountText or ""
 		record.CostCurrency.Text = currencyName or ""
+		UpgradeBoardUI._fitCard(record)
 
 		local balance = CurrencyStatsState.Balances[entry.Currency] or ZERO
 		local canAfford = UpgradePurchase.CanAffordNext(upgradeId, level, balance)
@@ -740,12 +731,18 @@ function UpgradeBoardUI.Mount(boardPart: BasePart)
 		end
 
 		resizeCards()
+
+		-- TextBounds is only meaningful once a label has been laid out,
+		-- so the fit right after building measures zeroes. One deferred
+		-- pass catches every card with real numbers.
+		task.defer(function()
+			for _, record in cards do
+				UpgradeBoardUI._fitCard(record)
+			end
+		end)
 	end
 
 	local function refresh()
-		-- Only rebuild when the SET or ORDER changes. Rebuilding on every
-		-- purchase would destroy the card under the cursor mid-click and
-		-- drop the MAX hover preview with it.
 		local _, signature = computeVisible()
 		if signature ~= currentSignature then
 			rebuild()

@@ -31,8 +31,10 @@ Template.Statistics = {
 		TotalCompostCollected = zero(),
 		TotalNutsCollected = zero(),
 		TotalRunesOpened = zero(),
+		TotalLeafRunesOpened = zero(),
 	},
 
+	JoinDate = 0, -- UTC timestamp
 	PlayTime = 0, -- seconds
 	JoinCount = 0,
 	RobuxSpent = 0,
@@ -44,13 +46,14 @@ Template.Tree = {
 }
 
 Template.Unlocks = {
-	-- Currency tiers
-	Nuts = false,
+	Features = {
+		Nuts = 0,
+	},
 
 	-- Upgrade boards
 	UpgradeBoards = {
 		Leafs = true,
-		Compost = false,
+		Compost = true,
 		Nuts = false,
 	},
 	
@@ -102,7 +105,7 @@ Template.Upgrades = {
 Template.Settings = {
 
 	General = {
-		NumberNotation = "scientific", -- "scientific" or "abbreviation"
+		NumberNotation = "abbreviation", -- "scientific" or "abbreviation"
 		HidePlayers = false,
 		HideMaxUpgrades = false,
 	},
@@ -112,7 +115,10 @@ Template.Settings = {
 		SoundEffects = true,
 	},
 
-	Misc = {},
+	Misc = {
+		PlayerSpeed = 16,
+		RuneLuck = true,
+	},
 
 	CurrencyView = {
 		Leafs = true,
@@ -142,4 +148,3 @@ Template.Quests = {
 }
 
 return Template
-
